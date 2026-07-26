@@ -1,23 +1,27 @@
 use chrono::{DateTime, Local, NaiveDate, NaiveTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
 // =============================================================================
 // 1. DEFINISI ENUM TYPE & VALUE
 // =============================================================================
+use std::ops::Not;
 
+use crate::DomainError;
 /// Representasi Skema Tipe Data SQL
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SqlType {
+    // primitif type
     Int,
     Float,
     Text,
     Bool,
+    Bytes,
+    // date and time
     Timestamp,
     Date,
     Time,
-    Bytes,
     /// Custom Enum dengan nama dan varian yang diizinkan
     Enum {
         name: String,
@@ -30,15 +34,24 @@ pub enum SqlType {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SqlValue {
+    /// bilangan bulat i64
     Int(i64),
+    /// bilangan pecahan f64
     Float(f64),
+    /// Sql String
     Text(String),
+    /// Sql boolean
     Bool(bool),
-    /// Tipe waktu, selalu disimpan dalam UTC (Single Source of Truth)
+
+    /// type file atau media
+    Bytes(Vec<u8>),
+
+    /// timestamp, selalu disimpan dalam UTC (Single Source of Truth)
     Timestamp(DateTime<Utc>),
     Date(NaiveDate),
     Time(NaiveTime),
-    Bytes(Vec<u8>),
+
+    /// representasi tidak ada nilai
     Null,
 }
 
@@ -92,6 +105,7 @@ impl SqlValue {
     }
 
     // --- VALIDASI TIPE ---
+    /// validasi type antara value dan schema mengembalikan boolean.
     pub fn matches_type(&self, sql_type: &SqlType) -> bool {
         match (self, sql_type) {
             (SqlValue::Null, _) => true,
@@ -109,34 +123,6 @@ impl SqlValue {
         }
     }
 }
-
-// =============================================================================
-// 2. ERROR HANDLING UNTUK KONVERSI TRYFROM
-// =============================================================================
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SqlValueConversionError {
-    pub expected: &'static str,
-    pub found: &'static str,
-}
-
-impl SqlValueConversionError {
-    pub fn new(expected: &'static str, found: &'static str) -> Self {
-        Self { expected, found }
-    }
-}
-
-impl fmt::Display for SqlValueConversionError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Gagal konversi SqlValue: mengharapkan tipe '{}', tetapi menemukan tipe '{}'",
-            self.expected, self.found
-        )
-    }
-}
-
-impl std::error::Error for SqlValueConversionError {}
 
 // =============================================================================
 // 3. IMPLEMENTASI `From` (Mengubah Tipe Rust -> SqlValue)
@@ -227,88 +213,73 @@ where
 
 // --- Integer ---
 impl TryFrom<SqlValue> for i64 {
-    type Error = SqlValueConversionError;
+    type Error = DomainError;
 
     fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
         match val {
             SqlValue::Int(n) => Ok(n),
-            other => Err(SqlValueConversionError::new(
-                "i64",
-                get_variant_name(&other),
-            )),
+            other => Err(DomainError::conversion("i64", get_variant_name(&other))),
         }
     }
 }
 
 impl TryFrom<SqlValue> for i32 {
-    type Error = SqlValueConversionError;
+    type Error = DomainError;
 
     fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
         match val {
             SqlValue::Int(n) => n
                 .try_into()
-                .map_err(|_| SqlValueConversionError::new("i32 (out of bounds)", "i64")),
-            other => Err(SqlValueConversionError::new(
-                "i32",
-                get_variant_name(&other),
-            )),
+                .map_err(|_| DomainError::conversion("i32 (out of bounds)", "i64")),
+            other => Err(DomainError::conversion("i32", get_variant_name(&other))),
         }
     }
 }
 
 // --- Float ---
 impl TryFrom<SqlValue> for f64 {
-    type Error = SqlValueConversionError;
+    type Error = DomainError;
 
     fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
         match val {
             SqlValue::Float(f) => Ok(f),
-            other => Err(SqlValueConversionError::new(
-                "f64",
-                get_variant_name(&other),
-            )),
+            other => Err(DomainError::conversion("f64", get_variant_name(&other))),
         }
     }
 }
 
 // --- Text / String ---
 impl TryFrom<SqlValue> for String {
-    type Error = SqlValueConversionError;
+    type Error = DomainError;
 
     fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
         match val {
             SqlValue::Text(s) => Ok(s),
-            other => Err(SqlValueConversionError::new(
-                "String",
-                get_variant_name(&other),
-            )),
+            other => Err(DomainError::conversion("String", get_variant_name(&other))),
         }
     }
 }
 
 // --- Boolean ---
 impl TryFrom<SqlValue> for bool {
-    type Error = SqlValueConversionError;
+    type Error = DomainError;
 
     fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
         match val {
             SqlValue::Bool(b) => Ok(b),
-            other => Err(SqlValueConversionError::new(
-                "bool",
-                get_variant_name(&other),
-            )),
+            other => Err(DomainError::conversion("bool", get_variant_name(&other))),
         }
     }
 }
 
 // --- Timestamp ---
 impl TryFrom<SqlValue> for DateTime<Utc> {
-    type Error = SqlValueConversionError;
+    type Error = DomainError;
 
     fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
         match val {
             SqlValue::Timestamp(dt) => Ok(dt),
-            other => Err(SqlValueConversionError::new(
+            other => Err(DomainError::conversion(
                 "DateTime<Utc>",
                 get_variant_name(&other),
             )),
@@ -318,12 +289,12 @@ impl TryFrom<SqlValue> for DateTime<Utc> {
 
 // --- Date ---
 impl TryFrom<SqlValue> for NaiveDate {
-    type Error = SqlValueConversionError;
+    type Error = DomainError;
 
     fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
         match val {
             SqlValue::Date(d) => Ok(d),
-            other => Err(SqlValueConversionError::new(
+            other => Err(DomainError::conversion(
                 "NaiveDate",
                 get_variant_name(&other),
             )),
@@ -333,12 +304,12 @@ impl TryFrom<SqlValue> for NaiveDate {
 
 // --- Time ---
 impl TryFrom<SqlValue> for NaiveTime {
-    type Error = SqlValueConversionError;
+    type Error = DomainError;
 
     fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
         match val {
             SqlValue::Time(t) => Ok(t),
-            other => Err(SqlValueConversionError::new(
+            other => Err(DomainError::conversion(
                 "NaiveTime",
                 get_variant_name(&other),
             )),
@@ -348,15 +319,12 @@ impl TryFrom<SqlValue> for NaiveTime {
 
 // --- Bytes ---
 impl TryFrom<SqlValue> for Vec<u8> {
-    type Error = SqlValueConversionError;
+    type Error = DomainError;
 
     fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
         match val {
             SqlValue::Bytes(b) => Ok(b),
-            other => Err(SqlValueConversionError::new(
-                "Vec<u8>",
-                get_variant_name(&other),
-            )),
+            other => Err(DomainError::conversion("Vec<u8>", get_variant_name(&other))),
         }
     }
 }
@@ -364,9 +332,9 @@ impl TryFrom<SqlValue> for Vec<u8> {
 // --- Support Option<T> untuk kolom yang BISA NULL (Nullable Column) ---
 impl<T> TryFrom<SqlValue> for Option<T>
 where
-    T: TryFrom<SqlValue, Error = SqlValueConversionError>,
+    T: TryFrom<SqlValue, Error = DomainError>,
 {
-    type Error = SqlValueConversionError;
+    type Error = DomainError;
 
     fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
         match val {
@@ -395,6 +363,7 @@ fn get_variant_name(val: &SqlValue) -> &'static str {
 // 5. IMPLEMENTASI EKSTRAKSI UTC UNTUK CLIENT
 // =============================================================================
 
+/// memecah UTC sebagai kumpulan data spesifik
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EkstrakTimeStamp {
     /// Waktu mentah dalam UTC
@@ -434,7 +403,7 @@ impl EkstrakTimeStamp {
         self.time.format("%H:%M:%S").to_string()
     }
 
-    /// String lengkap untuk Struk / Resi Bank
+    /// String lengkap untuk tanggal, waktu, dan zona.
     pub fn to_receipt_string(&self) -> String {
         format!(
             "{} {} {}",
@@ -442,5 +411,56 @@ impl EkstrakTimeStamp {
             self.formatted_time(),
             self.zona
         )
+    }
+}
+
+// =============================================================================
+// 6. Three-Valued Logic SQL / 3VL
+// =============================================================================
+
+/// untuk evaluasi ekspresi atau perbandingan kwhere (And Or Not)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SqlBool {
+    True,
+    False,
+    Unknown,
+}
+
+// Implementasi std::ops::Not untuk 3VL
+impl Not for SqlBool {
+    type Output = Self;
+
+    /// Helper logika NOT ala Three-Valued Logic SQL
+    fn not(self) -> Self::Output {
+        match self {
+            SqlBool::True => SqlBool::False,
+            SqlBool::False => SqlBool::True,
+            SqlBool::Unknown => SqlBool::Unknown,
+        }
+    }
+}
+
+impl SqlBool {
+    /// Helper logika AND ala Three-Valued Logic SQL
+    pub fn and(self, other: Self) -> Self {
+        match (self, other) {
+            (SqlBool::False, _) | (_, SqlBool::False) => SqlBool::False,
+            (SqlBool::True, SqlBool::True) => SqlBool::True,
+            _ => SqlBool::Unknown,
+        }
+    }
+
+    /// Helper logika OR ala Three-Valued Logic SQL
+    pub fn or(self, other: Self) -> Self {
+        match (self, other) {
+            (SqlBool::True, _) | (_, SqlBool::True) => SqlBool::True,
+            (SqlBool::False, SqlBool::False) => SqlBool::False,
+            _ => SqlBool::Unknown,
+        }
+    }
+
+    /// Conversion ke bool biasa untuk clause WHERE (Hanya TRUE yang lolos filter)
+    pub fn is_true(self) -> bool {
+        matches!(self, SqlBool::True)
     }
 }
