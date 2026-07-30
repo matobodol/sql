@@ -1,3 +1,4 @@
+pub mod aggregate;
 pub mod filter;
 pub mod limit;
 pub mod operator;
@@ -5,6 +6,7 @@ pub mod projection;
 pub mod seq_scan;
 pub mod sort;
 
+pub use aggregate::{AggregateFunc, AggregateOperator};
 pub use filter::FilterOperator;
 pub use limit::LimitOperator;
 pub use operator::PhysicalOperator;

@@ -111,9 +111,49 @@ impl Schema {
         }
     }
 
+    /// Mengubah nama tampilan (display name) dari kolom berdasarkan ColumnId
+    pub fn rename_column(&mut self, col_id: ColumnId, new_name: &str) -> Result<(), DomainError> {
+        if let Some(col) = self.columns.iter_mut().find(|c| c.id == col_id) {
+            col.name = new_name.to_string();
+            Ok(())
+        } else {
+            Err(DomainError::EvaluationError(format!(
+                "ColumnId '{:?}' tidak ditemukan di Schema",
+                col_id
+            )))
+        }
+    }
+
+    /// Accessor read-only untuk daftar kolom
     pub fn columns(&self) -> &[ColumnDef] {
         &self.columns
     }
+
+    /// Mengubah SqlType dari kolom tertentu berdasarkan ColumnId
+    pub fn modify_column_type(
+        &mut self,
+        col_id: ColumnId,
+        new_type: SqlType,
+    ) -> Result<(), DomainError> {
+        let col = self
+            .columns
+            .iter_mut()
+            .find(|c| c.id == col_id)
+            .ok_or_else(|| {
+                DomainError::EvaluationError(format!(
+                    "ColumnId '{:?}' tidak ditemukan pada Schema",
+                    col_id
+                ))
+            })?;
+
+        col.sql_type = new_type;
+        Ok(())
+    }
+
+    // /// Accessor mutable untuk daftar kolom
+    // pub fn columns_mut(&mut self) -> &mut Vec<ColumnDef> {
+    //     &mut self.columns
+    // }
 
     pub fn table_constraints(&self) -> &[TableConstraint] {
         &self.table_constraints

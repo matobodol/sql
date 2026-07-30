@@ -41,6 +41,14 @@ impl Table {
         &self.name
     }
 
+    pub fn rows_mut(&mut self) -> &mut Vec<Row> {
+        &mut self.rows
+    }
+
+    pub fn set_name(&mut self, name: impl Into<String>) {
+        self.name = name.into();
+    }
+
     pub fn schema(&self) -> &Schema {
         &self.schema
     }

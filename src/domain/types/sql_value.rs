@@ -404,3 +404,57 @@ impl EkstrakTimeStamp {
         )
     }
 }
+
+impl SqlValue {
+    /// Mencoba mengonversi (cast) nilai SqlValue ke target SqlType
+    pub fn try_cast_to(&self, target_type: &SqlType) -> Result<SqlValue, DomainError> {
+        if self.is_null() {
+            return Ok(SqlValue::Null);
+        }
+
+        match (self, target_type) {
+            // 1. Same type / No-op
+            (SqlValue::Int(v), SqlType::Int) => Ok(SqlValue::Int(*v)),
+            (SqlValue::Float(v), SqlType::Float) => Ok(SqlValue::Float(*v)),
+            (SqlValue::Text(v), SqlType::Text) => Ok(SqlValue::Text(v.clone())),
+            (SqlValue::Bool(v), SqlType::Bool) => Ok(SqlValue::Bool(*v)),
+
+            // 2. Int <-> Float (Menggunakan OrderedFloat)
+            (SqlValue::Int(v), SqlType::Float) => Ok(SqlValue::Float(OrderedFloat(*v as f64))),
+            (SqlValue::Float(v), SqlType::Int) => Ok(SqlValue::Int(v.into_inner() as i64)),
+
+            // 3. Int/Float/Bool -> Text
+            (SqlValue::Int(v), SqlType::Text) => Ok(SqlValue::Text(v.to_string())),
+            (SqlValue::Float(v), SqlType::Text) => Ok(SqlValue::Text(v.to_string())),
+            (SqlValue::Bool(v), SqlType::Text) => Ok(SqlValue::Text(v.to_string())),
+
+            // 4. Text -> Int/Float/Bool (Parsing)
+            (SqlValue::Text(s), SqlType::Int) => {
+                s.trim().parse::<i64>().map(SqlValue::Int).map_err(|_| {
+                    DomainError::EvaluationError(format!("Gagal mengonversi teks '{s}' ke Int"))
+                })
+            }
+
+            (SqlValue::Text(s), SqlType::Float) => s
+                .trim()
+                .parse::<f64>()
+                .map(|f| SqlValue::Float(OrderedFloat(f)))
+                .map_err(|_| {
+                    DomainError::EvaluationError(format!("Gagal mengonversi teks '{s}' ke Float"))
+                }),
+
+            (SqlValue::Text(s), SqlType::Bool) => match s.trim().to_lowercase().as_str() {
+                "true" | "1" | "t" => Ok(SqlValue::Bool(true)),
+                "false" | "0" | "f" => Ok(SqlValue::Bool(false)),
+                _ => Err(DomainError::EvaluationError(format!(
+                    "Gagal mengonversi teks '{s}' ke Bool"
+                ))),
+            },
+
+            _ => Err(DomainError::EvaluationError(format!(
+                "Konversi tipe data dari '{:?}' ke '{:?}' tidak didukung",
+                self, target_type
+            ))),
+        }
+    }
+}

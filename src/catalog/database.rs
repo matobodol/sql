@@ -6,8 +6,8 @@ use std::collections::HashMap;
 
 #[derive(Debug, Default)]
 pub struct Database {
-    registry: SymbolRegistry,
-    tables: HashMap<TableId, Table>,
+    pub registry: SymbolRegistry,
+    pub tables: HashMap<TableId, Table>,
 }
 
 impl Database {
@@ -83,8 +83,8 @@ impl Database {
             .ok_or_else(|| DomainError::TableNotFound(table_name.to_string()))
     }
 
-    /// RENAME COLUMN: Mengubah nama di Registry tanpa menyentuh data fisik di Table!
-    pub fn rename_column(&mut self, old_name: &str, new_name: &str) -> Result<(), DomainError> {
-        self.registry.rename_column(old_name, new_name)
-    }
+    //    /// RENAME COLUMN: Mengubah nama di Registry tanpa menyentuh data fisik di Table!
+    // pub fn rename_column(&mut self, old_name: &str, new_name: &str) -> Result<(), DomainError> {
+    //     self.registry.rename_column(old_name, new_name)
+    // }
 }

@@ -51,6 +51,15 @@ impl Row {
             None
         }
     }
+
+    /// Menambahkan nilai baru ke posisi akhir baris (digunakan saat ADD COLUMN)
+    pub fn push(&mut self, value: SqlValue) {
+        self.values.push(value);
+    }
+
+    pub fn values_mut(&mut self) -> &mut Vec<SqlValue> {
+        &mut self.values
+    }
 }
 
 impl From<Vec<SqlValue>> for Row {
