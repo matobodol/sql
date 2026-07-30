@@ -1,5 +1,8 @@
 use super::operator::PhysicalOperator;
-use crate::domain::{DomainError, Expr, Row, Schema};
+use crate::{
+    domain::{DomainError, Row, Schema},
+    expr::Expr,
+};
 
 pub struct ProjectionOperator {
     input: Box<dyn PhysicalOperator>,

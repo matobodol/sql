@@ -1,5 +1,6 @@
+use crate::{DomainError, Row, Schema, SqlValue, expr::Expr};
+
 use super::operator::PhysicalOperator;
-use crate::domain::{DomainError, Expr, Row, Schema, SqlValue};
 
 pub struct FilterOperator {
     input: Box<dyn PhysicalOperator>,

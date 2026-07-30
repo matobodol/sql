@@ -1,5 +1,8 @@
 use super::operator::PhysicalOperator;
-use crate::domain::{DomainError, Expr, Row, Schema, SqlValue};
+use crate::{
+    domain::{DomainError, Row, Schema, SqlValue},
+    expr::Expr,
+};
 use std::cmp::Ordering;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

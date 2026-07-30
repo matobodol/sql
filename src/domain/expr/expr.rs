@@ -1,6 +1,4 @@
-use crate::{DomainError, Row, Schema};
-
-use super::sql_type::SqlValue;
+use crate::{DomainError, Row, Schema, SqlBool, SqlValue};
 
 /// Operator perbadingan SQL
 #[derive(Debug, Clone, PartialEq)]
@@ -59,17 +57,24 @@ impl Expr {
 
             // 4. Binary Operation
             Expr::Binary { left, op, right } => {
-                let left_val = left.eval(schema, row)?;
-                let right_val = right.eval(schema, row)?;
+                let l = left.eval(schema, row)?;
+                let r = right.eval(schema, row)?;
 
-                match op {
-                    BinaryOp::Eq => Ok(SqlValue::Bool(left_val.eq(&right_val).is_true())),
-                    BinaryOp::Gt => Ok(SqlValue::Bool(left_val.gt(&right_val).is_true())),
-                    // Pengoperasian operator lain bisa dilanjutkan bertahap
-                    _ => Err(DomainError::EvaluationError(
-                        "Operator belum didukung".into(),
-                    )),
-                }
+                let res: SqlBool = match op {
+                    // --- Operator Perbandingan ---
+                    BinaryOp::Eq => l.eq(&r),
+                    BinaryOp::Gt => l.gt(&r),
+                    BinaryOp::Lt => l.lt(&r),
+                    BinaryOp::GtEq => l.gteq(&r),
+                    BinaryOp::LtEq => l.lteq(&r),
+
+                    // --- Operator Logika (3VL AND / OR / NOT) ---
+                    BinaryOp::And => l.and(&r),
+                    BinaryOp::Or => l.or(&r),
+                    BinaryOp::NotEq => l.noteq(&r),
+                };
+
+                Ok(res.into())
             }
         }
     }

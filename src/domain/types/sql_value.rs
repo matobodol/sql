@@ -1,34 +1,8 @@
 use chrono::{DateTime, Local, NaiveDate, NaiveTime, Utc};
+use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 
-// =============================================================================
-// 1. DEFINISI ENUM TYPE & VALUE
-// =============================================================================
-use std::ops::Not;
-
-use crate::DomainError;
-/// Representasi Skema Tipe Data SQL
-#[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SqlType {
-    // primitif type
-    Int,
-    Float,
-    Text,
-    Bool,
-    Bytes,
-    // date and time
-    Timestamp,
-    Date,
-    Time,
-    /// Custom Enum dengan nama dan varian yang diizinkan
-    Enum {
-        name: String,
-        variants: Vec<String>,
-    },
-    Custom(String),
-}
+use crate::{DomainError, SqlBool, SqlType};
 
 /// Representasi Nilai Data SQL di Runtime
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -37,7 +11,7 @@ pub enum SqlValue {
     /// bilangan bulat i64
     Int(i64),
     /// bilangan pecahan f64
-    Float(f64),
+    Float(OrderedFloat<f64>),
     /// Sql String
     Text(String),
     /// Sql boolean
@@ -128,6 +102,23 @@ impl SqlValue {
 // 3. IMPLEMENTASI `From` (Mengubah Tipe Rust -> SqlValue)
 // =============================================================================
 
+/// Mengubah `SqlBool` (3VL) menjadi `SqlValue` runtime
+impl From<&SqlBool> for SqlValue {
+    fn from(sb: &SqlBool) -> Self {
+        match sb {
+            SqlBool::True => SqlValue::Bool(true),
+            SqlBool::False => SqlValue::Bool(false),
+            SqlBool::Unknown => SqlValue::Null,
+        }
+    }
+}
+
+impl From<SqlBool> for SqlValue {
+    fn from(sb: SqlBool) -> Self {
+        SqlValue::from(&sb)
+    }
+}
+
 impl From<i64> for SqlValue {
     fn from(v: i64) -> Self {
         SqlValue::Int(v)
@@ -145,12 +136,12 @@ impl From<usize> for SqlValue {
 }
 impl From<f64> for SqlValue {
     fn from(v: f64) -> Self {
-        SqlValue::Float(v)
+        SqlValue::Float(OrderedFloat(v))
     }
 }
 impl From<f32> for SqlValue {
     fn from(v: f32) -> Self {
-        SqlValue::Float(v as f64)
+        SqlValue::Float(OrderedFloat(v as f64))
     }
 }
 impl From<String> for SqlValue {
@@ -242,7 +233,7 @@ impl TryFrom<SqlValue> for f64 {
 
     fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
         match val {
-            SqlValue::Float(f) => Ok(f),
+            SqlValue::Float(f) => Ok(f.into_inner()),
             other => Err(DomainError::conversion("f64", get_variant_name(&other))),
         }
     }
@@ -411,56 +402,5 @@ impl EkstrakTimeStamp {
             self.formatted_time(),
             self.zona
         )
-    }
-}
-
-// =============================================================================
-// 6. Three-Valued Logic SQL / 3VL
-// =============================================================================
-
-/// untuk evaluasi ekspresi atau perbandingan kwhere (And Or Not)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SqlBool {
-    True,
-    False,
-    Unknown,
-}
-
-// Implementasi std::ops::Not untuk 3VL
-impl Not for SqlBool {
-    type Output = Self;
-
-    /// Helper logika NOT ala Three-Valued Logic SQL
-    fn not(self) -> Self::Output {
-        match self {
-            SqlBool::True => SqlBool::False,
-            SqlBool::False => SqlBool::True,
-            SqlBool::Unknown => SqlBool::Unknown,
-        }
-    }
-}
-
-impl SqlBool {
-    /// Helper logika AND ala Three-Valued Logic SQL
-    pub fn and(self, other: Self) -> Self {
-        match (self, other) {
-            (SqlBool::False, _) | (_, SqlBool::False) => SqlBool::False,
-            (SqlBool::True, SqlBool::True) => SqlBool::True,
-            _ => SqlBool::Unknown,
-        }
-    }
-
-    /// Helper logika OR ala Three-Valued Logic SQL
-    pub fn or(self, other: Self) -> Self {
-        match (self, other) {
-            (SqlBool::True, _) | (_, SqlBool::True) => SqlBool::True,
-            (SqlBool::False, SqlBool::False) => SqlBool::False,
-            _ => SqlBool::Unknown,
-        }
-    }
-
-    /// Conversion ke bool biasa untuk clause WHERE (Hanya TRUE yang lolos filter)
-    pub fn is_true(self) -> bool {
-        matches!(self, SqlBool::True)
     }
 }

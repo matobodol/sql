@@ -1,6 +1,6 @@
 use super::domain_error::DomainError;
 use super::schema::Schema;
-use super::sql_type::SqlValue;
+use super::sql_value::SqlValue;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Row {
