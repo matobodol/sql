@@ -14,6 +14,11 @@ pub enum DomainError {
         expected: &'static str,
         found: &'static str,
     },
+    // #[error("Tabel '{0}' tidak ditemukan")]
+    TableNotFound(String),
+
+    // #[error("Tabel '{0}' sudah ada")]
+    TableAlreadyExists(String),
 }
 
 impl DomainError {
@@ -26,6 +31,9 @@ impl DomainError {
 impl fmt::Display for DomainError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            DomainError::TableNotFound(msg) => write!(f, "Tabel '{0}' tidak ditemukan", msg),
+            DomainError::TableAlreadyExists(msg) => write!(f, "Tabel '{0}' sudah ada", msg),
+
             DomainError::TypeMismatch { expected, found } => {
                 write!(
                     f,

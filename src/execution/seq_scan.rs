@@ -1,18 +1,17 @@
 use super::operator::PhysicalOperator;
 use crate::domain::{DomainError, Row, Schema};
+use std::vec::IntoIter;
 
 pub struct SeqScanOperator {
     schema: Schema,
-    rows: Vec<Row>,
-    cursor: usize,
+    rows: IntoIter<Row>,
 }
 
 impl SeqScanOperator {
     pub fn new(schema: Schema, rows: Vec<Row>) -> Self {
         Self {
             schema,
-            rows,
-            cursor: 0,
+            rows: rows.into_iter(),
         }
     }
 }
@@ -23,12 +22,7 @@ impl PhysicalOperator for SeqScanOperator {
     }
 
     fn next(&mut self) -> Result<Option<Row>, DomainError> {
-        if self.cursor < self.rows.len() {
-            let row = self.rows[self.cursor].clone();
-            self.cursor += 1;
-            Ok(Some(row))
-        } else {
-            Ok(None)
-        }
+        // .next() milik IntoIter langsung memindahkan (move) ownership Row tanpa clone!
+        Ok(self.rows.next())
     }
 }

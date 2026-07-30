@@ -1,8 +1,10 @@
+use serde::{Deserialize, Serialize};
+
 use super::domain_error::DomainError;
 use super::schema::Schema;
 use super::sql_value::SqlValue;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Row {
     values: Vec<SqlValue>,
 }
@@ -34,5 +36,45 @@ impl Row {
         self.get_by_index(idx).ok_or_else(|| {
             DomainError::EvaluationError(format!("Data pada indeks {idx} tidak ditemukan"))
         })
+    }
+
+    /// Mengonsumsi Row dan mengembalikan inner Vec<SqlValue>
+    pub fn into_values(self) -> Vec<SqlValue> {
+        self.values
+    }
+
+    /// Mengambil dan mengeluarkan nilai pada indeks tertentu (memindahkan ownership)
+    pub fn remove(&mut self, index: usize) -> Option<SqlValue> {
+        if index < self.values.len() {
+            Some(self.values.remove(index))
+        } else {
+            None
+        }
+    }
+}
+
+impl From<Vec<SqlValue>> for Row {
+    fn from(values: Vec<SqlValue>) -> Self {
+        Self { values }
+    }
+}
+
+impl FromIterator<SqlValue> for Row {
+    fn from_iter<T: IntoIterator<Item = SqlValue>>(iter: T) -> Self {
+        Self {
+            values: iter.into_iter().collect(),
+        }
+    }
+}
+
+use std::ops::Index;
+
+// Contoh penggunaan:
+// let val = &row[0];
+impl Index<usize> for Row {
+    type Output = SqlValue;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.values[index]
     }
 }

@@ -1,22 +1,12 @@
-use crate::{DomainError, Row, Schema, SqlBool, SqlValue};
+use serde::{Deserialize, Serialize};
 
-/// Operator perbadingan SQL
-#[derive(Debug, Clone, PartialEq)]
-pub enum BinaryOp {
-    Eq,    // =
-    NotEq, // !=
-    Gt,    // >
-    Lt,    // <
-    GtEq,  // >=
-    LtEq,  // <=
-    And,   // &
-    Or,    // |
-}
+use super::binary_op::BinaryOp;
+use crate::{ColumnId, SqlValue};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Expr {
     Literal(SqlValue),
-    Column(String),
+    Column(ColumnId),
     Binary {
         left: Box<Expr>,
         op: BinaryOp,
@@ -36,46 +26,13 @@ impl Expr {
         }
     }
 
-    /// Evaluasi ekspresi terhadap skema dan baris data saat ini.
-    pub fn eval(&self, schema: &Schema, row: &Row) -> Result<SqlValue, DomainError> {
-        match self {
-            // 1. Literal
-            Expr::Literal(val) => Ok(val.clone()),
+    /// Helper instan untuk ekspresi kolom
+    pub fn col(id: ColumnId) -> Self {
+        Expr::Column(id)
+    }
 
-            // 2. Column: Cari nilai menggunakan get_by_name yang sudah kita buat di Row
-            Expr::Column(name) => row.get_by_name(schema, name).cloned(),
-
-            // 3. IS NULL / IS NOT NULL
-            Expr::IsNull(expr) => {
-                let val = expr.eval(schema, row)?;
-                Ok(SqlValue::Bool(matches!(val, SqlValue::Null)))
-            }
-            Expr::IsNotNull(expr) => {
-                let val = expr.eval(schema, row)?;
-                Ok(SqlValue::Bool(!matches!(val, SqlValue::Null)))
-            }
-
-            // 4. Binary Operation
-            Expr::Binary { left, op, right } => {
-                let l = left.eval(schema, row)?;
-                let r = right.eval(schema, row)?;
-
-                let res: SqlBool = match op {
-                    // --- Operator Perbandingan ---
-                    BinaryOp::Eq => l.eq(&r),
-                    BinaryOp::Gt => l.gt(&r),
-                    BinaryOp::Lt => l.lt(&r),
-                    BinaryOp::GtEq => l.gteq(&r),
-                    BinaryOp::LtEq => l.lteq(&r),
-
-                    // --- Operator Logika (3VL AND / OR / NOT) ---
-                    BinaryOp::And => l.and(&r),
-                    BinaryOp::Or => l.or(&r),
-                    BinaryOp::NotEq => l.noteq(&r),
-                };
-
-                Ok(res.into())
-            }
-        }
+    /// Helper instan untuk ekspresi literal
+    pub fn lit(val: impl Into<SqlValue>) -> Self {
+        Expr::Literal(val.into())
     }
 }

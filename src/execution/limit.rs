@@ -27,27 +27,28 @@ impl PhysicalOperator for LimitOperator {
     }
 
     fn next(&mut self) -> Result<Option<Row>, DomainError> {
-        // Jika limit sudah tercapai, langsung hentikan eksekusi
+        // 1. Cek apakah batas limit sudah terpenuhi
         if let Some(limit) = self.limit {
             if self.produced >= limit {
                 return Ok(None);
             }
         }
 
-        // Skip baris data sebanyak `offset`
+        // 2. Skip baris data sebanyak `offset` (hanya berjalan saat offset belum terpenuhi)
         while self.skipped < self.offset {
-            if self.input.next()?.is_none() {
-                return Ok(None); // Data habis sebelum offset terpenuhi
+            match self.input.next()? {
+                Some(_) => self.skipped += 1,
+                None => return Ok(None), // Data habis sebelum offset terpenuhi
             }
-            self.skipped += 1;
         }
 
-        // Ambil baris data berikutnya yang valid
-        if let Some(row) = self.input.next()? {
-            self.produced += 1;
-            Ok(Some(row))
-        } else {
-            Ok(None)
+        // 3. Ambil data baris berikutnya
+        match self.input.next()? {
+            Some(row) => {
+                self.produced += 1;
+                Ok(Some(row))
+            }
+            None => Ok(None),
         }
     }
 }

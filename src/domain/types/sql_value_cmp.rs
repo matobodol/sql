@@ -5,6 +5,11 @@ use ordered_float::OrderedFloat;
 use crate::{SqlBool, SqlValue};
 
 impl SqlValue {
+    // Apakah Value adalah null
+    pub fn is_null(&self) -> bool {
+        matches!(self, SqlValue::Null)
+    }
+
     /// EQUAL (==)
     pub fn eq(&self, other: &Self) -> SqlBool {
         match (self, other) {
@@ -31,6 +36,10 @@ impl SqlValue {
             (SqlValue::Null, _) | (_, SqlValue::Null) => SqlBool::Unknown,
             (SqlValue::Int(a), SqlValue::Int(b)) => (a > b).into(),
             (SqlValue::Float(a), SqlValue::Float(b)) => (a > b).into(),
+            // Pada GT (>)
+            (SqlValue::Int(a), SqlValue::Float(b)) => (OrderedFloat(*a as f64) > *b).into(),
+            (SqlValue::Float(a), SqlValue::Int(b)) => (*a > OrderedFloat(*b as f64)).into(),
+
             (SqlValue::Text(a), SqlValue::Text(b)) => (a > b).into(),
             (SqlValue::Timestamp(a), SqlValue::Timestamp(b)) => (a > b).into(),
             (SqlValue::Date(a), SqlValue::Date(b)) => (a > b).into(),
@@ -45,6 +54,10 @@ impl SqlValue {
             (SqlValue::Null, _) | (_, SqlValue::Null) => SqlBool::Unknown,
             (SqlValue::Int(a), SqlValue::Int(b)) => (a < b).into(),
             (SqlValue::Float(a), SqlValue::Float(b)) => (a < b).into(),
+            // Pada LT (<)
+            (SqlValue::Int(a), SqlValue::Float(b)) => (OrderedFloat(*a as f64) < *b).into(),
+            (SqlValue::Float(a), SqlValue::Int(b)) => (*a < OrderedFloat(*b as f64)).into(),
+
             (SqlValue::Text(a), SqlValue::Text(b)) => (a < b).into(),
             (SqlValue::Timestamp(a), SqlValue::Timestamp(b)) => (a < b).into(),
             (SqlValue::Date(a), SqlValue::Date(b)) => (a < b).into(),
@@ -59,6 +72,10 @@ impl SqlValue {
             (SqlValue::Null, _) | (_, SqlValue::Null) => SqlBool::Unknown,
             (SqlValue::Int(a), SqlValue::Int(b)) => (a >= b).into(),
             (SqlValue::Float(a), SqlValue::Float(b)) => (a >= b).into(),
+            // Pada GTEQ (>=)
+            (SqlValue::Int(a), SqlValue::Float(b)) => (OrderedFloat(*a as f64) >= *b).into(),
+            (SqlValue::Float(a), SqlValue::Int(b)) => (*a >= OrderedFloat(*b as f64)).into(),
+
             (SqlValue::Text(a), SqlValue::Text(b)) => (a >= b).into(),
             (SqlValue::Timestamp(a), SqlValue::Timestamp(b)) => (a >= b).into(),
             (SqlValue::Date(a), SqlValue::Date(b)) => (a >= b).into(),
@@ -73,6 +90,9 @@ impl SqlValue {
             (SqlValue::Null, _) | (_, SqlValue::Null) => SqlBool::Unknown,
             (SqlValue::Int(a), SqlValue::Int(b)) => (a <= b).into(),
             (SqlValue::Float(a), SqlValue::Float(b)) => (a <= b).into(),
+            // Pada LTEQ (<=)
+            (SqlValue::Int(a), SqlValue::Float(b)) => (OrderedFloat(*a as f64) <= *b).into(),
+            (SqlValue::Float(a), SqlValue::Int(b)) => (*a <= OrderedFloat(*b as f64)).into(),
             (SqlValue::Text(a), SqlValue::Text(b)) => (a <= b).into(),
             (SqlValue::Timestamp(a), SqlValue::Timestamp(b)) => (a <= b).into(),
             (SqlValue::Date(a), SqlValue::Date(b)) => (a <= b).into(),

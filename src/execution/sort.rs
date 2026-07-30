@@ -1,9 +1,11 @@
 use super::operator::PhysicalOperator;
 use crate::{
     domain::{DomainError, Row, Schema, SqlValue},
+    eval_expr,
     expr::Expr,
 };
 use std::cmp::Ordering;
+use std::vec::IntoIter; // 👈 Import IntoIter
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SortOrder {
@@ -20,9 +22,7 @@ pub struct OrderByExpr {
 pub struct SortOperator {
     input: Box<dyn PhysicalOperator>,
     order_by: Vec<OrderByExpr>,
-    // Buffer internal untuk menyimpan baris yang sudah diurutkan
-    sorted_rows: Option<Vec<Row>>,
-    cursor: usize,
+    sorted_rows: Option<IntoIter<Row>>,
 }
 
 impl SortOperator {
@@ -31,7 +31,6 @@ impl SortOperator {
             input,
             order_by,
             sorted_rows: None,
-            cursor: 0,
         }
     }
 
@@ -55,7 +54,7 @@ impl SortOperator {
             }
 
             for spec in order_by {
-                let val_a = match spec.expr.eval(&schema, a) {
+                let val_a = match eval_expr(&spec.expr, &schema, a) {
                     Ok(v) => v,
                     Err(e) => {
                         sort_error = Some(e);
@@ -63,7 +62,7 @@ impl SortOperator {
                     }
                 };
 
-                let val_b = match spec.expr.eval(&schema, b) {
+                let val_b = match eval_expr(&spec.expr, &schema, b) {
                     Ok(v) => v,
                     Err(e) => {
                         sort_error = Some(e);
@@ -87,7 +86,7 @@ impl SortOperator {
             return Err(err);
         }
 
-        self.sorted_rows = Some(rows);
+        self.sorted_rows = Some(rows.into_iter());
         Ok(())
     }
 }
@@ -103,15 +102,7 @@ impl PhysicalOperator for SortOperator {
             self.fetch_and_sort()?;
         }
 
-        let rows = self.sorted_rows.as_ref().unwrap();
-
-        if self.cursor < rows.len() {
-            let row = rows[self.cursor].clone();
-            self.cursor += 1;
-            Ok(Some(row))
-        } else {
-            Ok(None)
-        }
+        Ok(self.sorted_rows.as_mut().unwrap().next())
     }
 }
 
@@ -119,10 +110,15 @@ impl PhysicalOperator for SortOperator {
 fn compare_sql_values(a: &SqlValue, b: &SqlValue) -> Ordering {
     match (a, b) {
         (SqlValue::Null, SqlValue::Null) => Ordering::Equal,
-        (SqlValue::Null, _) => Ordering::Less, // NULL dianggap paling kecil
+        (SqlValue::Null, _) => Ordering::Less,
         (_, SqlValue::Null) => Ordering::Greater,
         (SqlValue::Int(x), SqlValue::Int(y)) => x.cmp(y),
-        (SqlValue::Float(x), SqlValue::Float(y)) => x.partial_cmp(y).unwrap_or(Ordering::Equal),
+        (SqlValue::Float(x), SqlValue::Float(y)) => x.cmp(y),
+
+        // --- Tambahan: Cross-type Int & Float Comparison ---
+        (SqlValue::Int(x), SqlValue::Float(y)) => ordered_float::OrderedFloat(*x as f64).cmp(y),
+        (SqlValue::Float(x), SqlValue::Int(y)) => x.cmp(&ordered_float::OrderedFloat(*y as f64)),
+
         (SqlValue::Text(x), SqlValue::Text(y)) => x.cmp(y),
         (SqlValue::Bool(x), SqlValue::Bool(y)) => x.cmp(y),
         (SqlValue::Timestamp(x), SqlValue::Timestamp(y)) => x.cmp(y),

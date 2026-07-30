@@ -5,7 +5,7 @@ use crate::SqlValue;
 
 /// Representasi Skema Tipe Data SQL
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SqlType {
     // primitif type
@@ -27,7 +27,7 @@ pub enum SqlType {
 }
 
 /// untuk evaluasi ekspresi atau perbandingan kwhere (And Or Not)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SqlBool {
     True,
     False,

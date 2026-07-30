@@ -1,4 +1,4 @@
-use crate::{DomainError, Row, Schema, SqlValue, expr::Expr};
+use crate::{DomainError, Row, Schema, SqlValue, eval_expr, expr::Expr};
 
 use super::operator::PhysicalOperator;
 
@@ -15,17 +15,14 @@ impl FilterOperator {
 
 impl PhysicalOperator for FilterOperator {
     fn schema(&self) -> &Schema {
-        // Skema FilterOperator sama persis dengan skema input-nya
         self.input.schema()
     }
 
     fn next(&mut self) -> Result<Option<Row>, DomainError> {
-        let schema = self.input.schema().clone();
-
         // Loop sampai menemukan Row yang lolos filter, atau sampai data habis
         while let Some(row) = self.input.next()? {
-            // Evaluasi predikat terhadap Row saat ini
-            let eval_result = self.predicate.eval(&schema, &row)?;
+            // Pasang referensi &Schema langsung tanpa .clone()!
+            let eval_result = eval_expr(&self.predicate, self.input.schema(), &row)?;
 
             // Dalam logika SQL 3VL, hanya nilai TRUE murni yang lolos filter WHERE
             if let SqlValue::Bool(true) = eval_result {
