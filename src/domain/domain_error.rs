@@ -1,23 +1,29 @@
-use std::fmt;
+use thiserror::Error;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum DomainError {
-    TypeMismatch {
-        expected: String,
-        found: String,
-    },
+    #[error("Tipe tidak cocok: diharapkan '{expected}', ditemukan '{found}'")]
+    TypeMismatch { expected: String, found: String },
+
+    #[error("Ekspresi tidak valid: {0}")]
     InvalidExpression(String),
+
+    #[error("Gagal mengevaluasi: {0}")]
     EvaluationError(String),
 
     /// Error saat ekstraksi/konversi `SqlValue` ke tipe Rust asli gagal.
+    #[error(
+        "Gagal konversi SqlValue: mengharapkan tipe '{expected}', tetapi menemukan tipe '{found}'"
+    )]
     Conversion {
         expected: &'static str,
         found: &'static str,
     },
-    // #[error("Tabel '{0}' tidak ditemukan")]
+
+    #[error("Tabel '{0}' tidak ditemukan")]
     TableNotFound(String),
 
-    // #[error("Tabel '{0}' sudah ada")]
+    #[error("Tabel '{0}' sudah ada")]
     TableAlreadyExists(String),
 }
 
@@ -27,29 +33,3 @@ impl DomainError {
         Self::Conversion { expected, found }
     }
 }
-
-impl fmt::Display for DomainError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            DomainError::TableNotFound(msg) => write!(f, "Tabel '{0}' tidak ditemukan", msg),
-            DomainError::TableAlreadyExists(msg) => write!(f, "Tabel '{0}' sudah ada", msg),
-
-            DomainError::TypeMismatch { expected, found } => {
-                write!(
-                    f,
-                    "Tipe tidak cocok: diharapkan '{expected}', ditemukan '{found}'"
-                )
-            }
-            Self::Conversion { expected, found } => {
-                write!(
-                    f,
-                    "Gagal konversi SqlValue: mengharapkan tipe '{expected}', tetapi menemukan tipe '{found}'"
-                )
-            }
-            DomainError::InvalidExpression(msg) => write!(f, "Ekspresi tidak valid: {msg}"),
-            DomainError::EvaluationError(msg) => write!(f, "Gagal mengevaluasi: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for DomainError {}
