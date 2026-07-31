@@ -5,7 +5,7 @@ mod tests {
     use sql::domain::{ColumnDef, Row, Schema, SqlType, SqlValue};
     use sql::execution::sort::{OrderByExpr, SortOrder};
     use sql::expr::Expr;
-    use sql::{BinaryOp, SelectStmt, execute_select};
+    use sql::{BinaryOp, SelectStmt};
 
     fn setup_test_table() -> Table {
         // 1. Buat Skema Tabel: id (Int), name (Text), age (Int)
@@ -53,7 +53,7 @@ mod tests {
 
     #[test]
     fn test_select_basic_and_filter() {
-        let table = setup_test_table();
+        let mut table = setup_test_table();
 
         // Query: SELECT * WHERE age > 24
         let stmt = SelectStmt {
@@ -75,7 +75,7 @@ mod tests {
             offset: 0,
         };
 
-        let result = execute_select(&table, stmt).unwrap();
+        let result = table.execute_select(stmt).unwrap();
 
         // Harusnya Alice (25), Bob (30), Diana (28) -> Total 3 baris
         assert_eq!(result.rows.len(), 3);
@@ -86,7 +86,7 @@ mod tests {
 
     #[test]
     fn test_select_sort_and_limit() {
-        let table = setup_test_table();
+        let mut table = setup_test_table();
 
         // Query: SELECT name, age ORDER BY age ASC LIMIT 2
         let stmt = SelectStmt {
@@ -105,7 +105,7 @@ mod tests {
             offset: 0,
         };
 
-        let result = execute_select(&table, stmt).unwrap();
+        let result = table.execute_select(stmt).unwrap();
 
         // Urutan umur terkecil: Charlie (22), Alice (25). Karena LIMIT 2, Diana dan Bob tidak ikut.
         assert_eq!(result.rows.len(), 2);
