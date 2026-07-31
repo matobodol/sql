@@ -1,8 +1,8 @@
-use crate::AutoIncrement;
 use crate::catalog::db_function::dml::{DmlAction, DmlResult, execute_dml};
 use crate::domain::id::{ColumnId, TableId};
-use crate::domain::{ColumnConstraint, DomainError, Row, Schema, SqlValue};
+use crate::domain::{ColumnConstraint, DomainError, Row, Schema};
 use crate::index::IndexRegistry;
+use crate::{AutoIncrement, QueryResult, SelectStmt, execute_select};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -123,21 +123,26 @@ impl Table {
         execute_dml(self, action)
     }
 
-    /// Helper instan untuk Single Insert (Convenience Wrapper)
-    pub fn insert(&mut self, row_values: Vec<SqlValue>) -> Result<usize, DomainError> {
-        match self.execute_dml(DmlAction::Insert {
-            rows: vec![row_values],
-        })? {
-            DmlResult::Inserted(count) => Ok(count),
-            _ => unreachable!(),
-        }
+    /// Pintu masuk utama untuk seluruh aksi DQL (SELECT)
+    pub fn execute_select(table: &Table, stmt: SelectStmt) -> Result<QueryResult, DomainError> {
+        execute_select(table, stmt)
     }
 
-    /// Helper instan untuk Bulk Insert (Convenience Wrapper)
-    pub fn insert_batch(&mut self, rows: Vec<Vec<SqlValue>>) -> Result<usize, DomainError> {
-        match self.execute_dml(DmlAction::Insert { rows })? {
-            DmlResult::Inserted(count) => Ok(count),
-            _ => unreachable!(),
-        }
-    }
+    // /// Helper instan untuk Single Insert (Convenience Wrapper)
+    // fn insert(&mut self, row_values: Vec<SqlValue>) -> Result<usize, DomainError> {
+    //     match self.execute_dml(DmlAction::Insert {
+    //         rows: vec![row_values],
+    //     })? {
+    //         DmlResult::Inserted(count) => Ok(count),
+    //         _ => unreachable!(),
+    //     }
+    // }
+    //
+    // /// Helper instan untuk Bulk Insert (Convenience Wrapper)
+    // fn insert_batch(&mut self, rows: Vec<Vec<SqlValue>>) -> Result<usize, DomainError> {
+    //     match self.execute_dml(DmlAction::Insert { rows })? {
+    //         DmlResult::Inserted(count) => Ok(count),
+    //         _ => unreachable!(),
+    //     }
+    // }
 }

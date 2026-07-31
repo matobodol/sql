@@ -1,8 +1,9 @@
-use crate::catalog::db_function::alter_table::{AlterEngine, AlterTableAction};
+use crate::catalog::db_function::alter_table::AlterTableAction;
 use crate::catalog::registry::SymbolRegistry;
 use crate::catalog::table::Table;
 use crate::domain::id::TableId;
 use crate::domain::{ColumnConstraint, ColumnDef, DomainError, Schema, SqlType};
+use crate::execute_alter;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Default)]
@@ -99,6 +100,6 @@ impl Database {
         table_name: &str,
         actions: Vec<AlterTableAction>,
     ) -> Result<(), DomainError> {
-        AlterEngine::execute_alter(self, table_name, actions)
+        execute_alter(self, table_name, actions)
     }
 }

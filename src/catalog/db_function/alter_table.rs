@@ -38,104 +38,85 @@ pub enum AlterTableAction {
     },
 }
 
-/// Engine penangan aksi ALTER TABLE dengan transactional/staging support
-pub struct AlterEngine;
+// impl AlterEngine {
+pub(crate) fn execute_alter(
+    db: &mut Database,
+    table_name: &str,
+    actions: Vec<AlterTableAction>,
+) -> Result<(), DomainError> {
+    // 1. Cek awal keberadaan tabel
+    if db.get_table(table_name).is_err() {
+        return Err(DomainError::TableNotFound(table_name.to_string()));
+    }
 
-impl AlterEngine {
-    pub fn execute_alter(
-        db: &mut Database,
-        table_name: &str,
-        actions: Vec<AlterTableAction>,
-    ) -> Result<(), DomainError> {
-        // 1. Cek awal keberadaan tabel
-        if db.get_table(table_name).is_err() {
-            return Err(DomainError::TableNotFound(table_name.to_string()));
-        }
+    // 2. Buat snapshot staging (clone database state sementara)
+    let mut db_staging = db.clone();
+    let mut current_table_name = table_name.to_string();
 
-        // 2. Buat snapshot staging (clone database state sementara)
-        let mut db_staging = db.clone();
-        let mut current_table_name = table_name.to_string();
-
-        // 3. Jalankan seluruh aksi pada db_staging via pattern matching
-        for action in actions {
-            match action {
-                AlterTableAction::AddColumn {
-                    name,
+    // 3. Jalankan seluruh aksi pada db_staging via pattern matching
+    for action in actions {
+        match action {
+            AlterTableAction::AddColumn {
+                name,
+                sql_type,
+                constraints,
+            } => {
+                execute_add_column(
+                    &mut db_staging,
+                    &current_table_name,
+                    &name,
                     sql_type,
                     constraints,
-                } => {
-                    execute_add_column(
-                        &mut db_staging,
-                        &current_table_name,
-                        &name,
-                        sql_type,
-                        constraints,
-                    )?;
-                }
-                AlterTableAction::DropColumn { name } => {
-                    execute_drop_column(&mut db_staging, &current_table_name, &name)?;
-                }
-                AlterTableAction::RenameColumn { old_name, new_name } => {
-                    execute_rename_column(
-                        &mut db_staging,
-                        &current_table_name,
-                        &old_name,
-                        &new_name,
-                    )?;
-                }
-                AlterTableAction::RenameTable { new_name } => {
-                    execute_rename_table(&mut db_staging, &current_table_name, &new_name)?;
-                    current_table_name = new_name;
-                }
-                AlterTableAction::ModifyColumnType { name, new_type } => {
-                    execute_modify_column_type(
-                        &mut db_staging,
-                        &current_table_name,
-                        &name,
-                        new_type,
-                    )?;
-                }
-                AlterTableAction::AddConstraint {
-                    col_name,
+                )?;
+            }
+            AlterTableAction::DropColumn { name } => {
+                execute_drop_column(&mut db_staging, &current_table_name, &name)?;
+            }
+            AlterTableAction::RenameColumn { old_name, new_name } => {
+                execute_rename_column(&mut db_staging, &current_table_name, &old_name, &new_name)?;
+            }
+            AlterTableAction::RenameTable { new_name } => {
+                execute_rename_table(&mut db_staging, &current_table_name, &new_name)?;
+                current_table_name = new_name;
+            }
+            AlterTableAction::ModifyColumnType { name, new_type } => {
+                execute_modify_column_type(&mut db_staging, &current_table_name, &name, new_type)?;
+            }
+            AlterTableAction::AddConstraint {
+                col_name,
+                constraint,
+            } => {
+                execute_add_constraint(
+                    &mut db_staging,
+                    &current_table_name,
+                    &col_name,
                     constraint,
-                } => {
-                    execute_add_constraint(
-                        &mut db_staging,
-                        &current_table_name,
-                        &col_name,
-                        constraint,
-                    )?;
-                }
-                AlterTableAction::DropConstraint {
-                    col_name,
-                    constraint,
-                } => {
-                    execute_drop_constraint(
-                        &mut db_staging,
-                        &current_table_name,
-                        &col_name,
-                        &constraint,
-                    )?;
-                }
-                AlterTableAction::SetDefault {
-                    col_name,
-                    default_val,
-                } => {
-                    execute_set_default(
-                        &mut db_staging,
-                        &current_table_name,
-                        &col_name,
-                        default_val,
-                    )?;
-                }
+                )?;
+            }
+            AlterTableAction::DropConstraint {
+                col_name,
+                constraint,
+            } => {
+                execute_drop_constraint(
+                    &mut db_staging,
+                    &current_table_name,
+                    &col_name,
+                    &constraint,
+                )?;
+            }
+            AlterTableAction::SetDefault {
+                col_name,
+                default_val,
+            } => {
+                execute_set_default(&mut db_staging, &current_table_name, &col_name, default_val)?;
             }
         }
-
-        // 4. COMMIT: Jika SELURUH aksi berhasil, swap/apply staging ke db utama
-        *db = db_staging;
-
-        Ok(())
     }
+
+    // 4. COMMIT: Jika SELURUH aksi berhasil, swap/apply staging ke db utama
+    *db = db_staging;
+
+    Ok(())
 }
 
 // --- PRIVATE HANDLER FUNCTIONS ---

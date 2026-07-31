@@ -29,7 +29,7 @@ pub enum DmlResult {
 }
 
 /// Eksekutor terpusat untuk DML Action
-pub fn execute_dml(table: &mut Table, action: DmlAction) -> Result<DmlResult, DomainError> {
+pub(crate) fn execute_dml(table: &mut Table, action: DmlAction) -> Result<DmlResult, DomainError> {
     match action {
         DmlAction::Insert { rows } => {
             let inserted_count = handle_insert(table, rows)?;

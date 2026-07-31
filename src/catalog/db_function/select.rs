@@ -37,7 +37,7 @@ pub struct QueryResult {
 }
 
 /// Eksekutor utama SELECT dengan merangkai Physical Operator Tree
-pub fn execute_select(table: &Table, stmt: SelectStmt) -> Result<QueryResult, DomainError> {
+pub(crate) fn execute_select(table: &Table, stmt: SelectStmt) -> Result<QueryResult, DomainError> {
     let base_schema = table.schema().clone();
     let base_rows = table.rows().to_vec();
 
