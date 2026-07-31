@@ -2,7 +2,7 @@ use crate::domain::DomainError;
 use crate::domain::id::{ColumnId, IdGenerator, TableId};
 use std::collections::HashMap;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SymbolRegistry {
     column_id_gen: IdGenerator,
     table_id_gen: IdGenerator,

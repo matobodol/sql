@@ -285,3 +285,78 @@ impl Schema {
         Ok(())
     }
 }
+
+impl Schema {
+    /// Menambahkan constraint baru ke kolom berdasarkan ColumnId
+    pub fn add_column_constraint(
+        &mut self,
+        col_id: ColumnId,
+        constraint: ColumnConstraint,
+    ) -> Result<(), DomainError> {
+        let col = self
+            .columns
+            .iter_mut()
+            .find(|c| c.id == col_id)
+            .ok_or_else(|| {
+                DomainError::EvaluationError("Kolom tidak ditemukan pada Schema".into())
+            })?;
+
+        col.constraints.push(constraint);
+        Ok(())
+    }
+
+    /// Menghapus constraint dari kolom berdasarkan ColumnId
+    pub fn drop_column_constraint(
+        &mut self,
+        col_id: ColumnId,
+        constraint: &ColumnConstraint,
+    ) -> Result<(), DomainError> {
+        let col = self
+            .columns
+            .iter_mut()
+            .find(|c| c.id == col_id)
+            .ok_or_else(|| {
+                DomainError::EvaluationError("Kolom tidak ditemukan pada Schema".into())
+            })?;
+
+        let initial_len = col.constraints.len();
+        col.constraints.retain(|c| c != constraint);
+
+        if col.constraints.len() == initial_len {
+            return Err(DomainError::EvaluationError(format!(
+                "Constraint '{:?}' tidak ditemukan pada kolom",
+                constraint
+            )));
+        }
+
+        Ok(())
+    }
+}
+
+impl Schema {
+    /// Mengubah atau menghapus nilai default pada ColumnDef berdasarkan ColumnId
+    pub fn set_column_default(
+        &mut self,
+        col_id: ColumnId,
+        default_val: Option<SqlValue>,
+    ) -> Result<(), DomainError> {
+        let col = self
+            .columns
+            .iter_mut()
+            .find(|c| c.id == col_id)
+            .ok_or_else(|| {
+                DomainError::EvaluationError("Kolom tidak ditemukan pada Schema".into())
+            })?;
+
+        // 1. Bersihkan nilai default lama jika ada
+        col.constraints
+            .retain(|c| !matches!(c, ColumnConstraint::Default(_)));
+
+        // 2. Jika ada default_val baru, tambahkan ke constraints
+        if let Some(val) = default_val {
+            col.constraints.push(ColumnConstraint::Default(val));
+        }
+
+        Ok(())
+    }
+}

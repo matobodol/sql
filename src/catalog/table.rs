@@ -1,6 +1,8 @@
 use crate::AutoIncrement;
+use crate::catalog::db_function::dml::{DmlAction, DmlResult, execute_dml};
 use crate::domain::id::{ColumnId, TableId};
 use crate::domain::{ColumnConstraint, DomainError, Row, Schema, SqlValue};
+use crate::index::IndexRegistry;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -9,6 +11,10 @@ pub struct Table {
     name: String,
     schema: Schema,
     rows: Vec<Row>,
+    /// Counter sekuensial internal untuk memproduksi RowId
+    next_row_id: u64,
+    /// Registry indeks untuk BTreeIndex pada kolom-kolom ber-indeks
+    index_registry: IndexRegistry,
     /// Menggunakan ColumnId sebagai Key agar imun terhadap RENAME COLUMN!
     auto_increment_counters: HashMap<ColumnId, i64>,
 }
@@ -24,14 +30,37 @@ impl Table {
             }
         }
 
-        Self {
+        let mut table = Self {
             id,
             name: name.into(),
             schema,
             rows: Vec::new(),
+            next_row_id: 1,
+            index_registry: IndexRegistry::new(),
             auto_increment_counters,
+        };
+
+        // Otomatis bangun BTreeIndex untuk kolom PRIMARY KEY dan UNIQUE
+        table.build_indexes_from_schema();
+        table
+    }
+
+    /// Memeriksa skema dan membuat BTreeIndex secara otomatis untuk UNIQUE/PRIMARY KEY
+    fn build_indexes_from_schema(&mut self) {
+        for col in self.schema.columns() {
+            let is_unique = col.is_primary_key()
+                || col
+                    .constraints
+                    .iter()
+                    .any(|c| matches!(c, ColumnConstraint::Unique));
+
+            if is_unique {
+                let _ = self.index_registry.create_btree_index(col.id, true);
+            }
         }
     }
+
+    // --- GETTERS & SETTERS ---
 
     pub fn id(&self) -> TableId {
         self.id
@@ -39,10 +68,6 @@ impl Table {
 
     pub fn name(&self) -> &str {
         &self.name
-    }
-
-    pub fn rows_mut(&mut self) -> &mut Vec<Row> {
-        &mut self.rows
     }
 
     pub fn set_name(&mut self, name: impl Into<String>) {
@@ -61,93 +86,58 @@ impl Table {
         &self.rows
     }
 
-    /// Memasukkan data baru (INSERT) ke dalam tabel
-    pub fn insert(&mut self, mut row_values: Vec<SqlValue>) -> Result<(), DomainError> {
-        let columns = self.schema.columns();
+    pub fn rows_mut(&mut self) -> &mut Vec<Row> {
+        &mut self.rows
+    }
 
-        // 1. Pad array nilai jika nilainya kurang dari jumlah kolom di schema
-        if row_values.len() < columns.len() {
-            row_values.resize(columns.len(), SqlValue::Null);
+    pub fn index_registry(&self) -> &IndexRegistry {
+        &self.index_registry
+    }
+
+    pub fn index_registry_mut(&mut self) -> &mut IndexRegistry {
+        &mut self.index_registry
+    }
+
+    // --- HELPER INTERNAL UNTUK DML ENGINE ---
+
+    pub(crate) fn next_row_id(&self) -> u64 {
+        self.next_row_id
+    }
+
+    pub(crate) fn increment_next_row_id(&mut self) {
+        self.next_row_id += 1;
+    }
+
+    pub(crate) fn auto_increment_counters(&self) -> &HashMap<ColumnId, i64> {
+        &self.auto_increment_counters
+    }
+
+    pub(crate) fn auto_increment_counters_mut(&mut self) -> &mut HashMap<ColumnId, i64> {
+        &mut self.auto_increment_counters
+    }
+
+    // --- API DML EKSTERNAL ---
+
+    /// Pintu masuk utama untuk seluruh aksi DML (INSERT, UPDATE, DELETE)
+    pub fn execute_dml(&mut self, action: DmlAction) -> Result<DmlResult, DomainError> {
+        execute_dml(self, action)
+    }
+
+    /// Helper instan untuk Single Insert (Convenience Wrapper)
+    pub fn insert(&mut self, row_values: Vec<SqlValue>) -> Result<usize, DomainError> {
+        match self.execute_dml(DmlAction::Insert {
+            rows: vec![row_values],
+        })? {
+            DmlResult::Inserted(count) => Ok(count),
+            _ => unreachable!(),
         }
+    }
 
-        // 2. Tangani AutoIncrement & Default Values
-        for (i, col) in columns.iter().enumerate() {
-            let is_null = row_values[i].is_null();
-
-            // A. AutoIncrement Priority (Lookup via col.id)
-            if col.is_auto_increment() && is_null {
-                let counter = self
-                    .auto_increment_counters
-                    .get_mut(&col.id)
-                    .expect("Counter auto-increment harusnya sudah diinisialisasi");
-
-                // 1. Set nilai saat ini
-                row_values[i] = SqlValue::Int(*counter);
-
-                // 2. Ambil nilai step dari konfigurasi
-                let step = match col.auto_increment_config() {
-                    Some(AutoIncrement::Enabled { step, .. }) => *step,
-                    _ => 1,
-                };
-
-                // 3. Tambahkan counter sesuai step
-                *counter += step;
-            }
-            // B. Jika user mengisi nilai manual (tidak Null) pada kolom AutoIncrement:
-            else if col.is_auto_increment() && !is_null {
-                if let SqlValue::Int(manual_val) = row_values[i] {
-                    if let Some(counter) = self.auto_increment_counters.get_mut(&col.id) {
-                        if manual_val >= *counter {
-                            let step = match col.auto_increment_config() {
-                                Some(AutoIncrement::Enabled { step, .. }) => *step,
-                                _ => 1,
-                            };
-                            // Sesuaikan counter agar lompat ke atas nilai manual user
-                            *counter = manual_val + step;
-                        }
-                    }
-                }
-            }
-            // C. Default Value Fallback
-            else if is_null {
-                if let Some(default_val) = col.default_value() {
-                    row_values[i] = default_val.clone();
-                }
-            }
+    /// Helper instan untuk Bulk Insert (Convenience Wrapper)
+    pub fn insert_batch(&mut self, rows: Vec<Vec<SqlValue>>) -> Result<usize, DomainError> {
+        match self.execute_dml(DmlAction::Insert { rows })? {
+            DmlResult::Inserted(count) => Ok(count),
+            _ => unreachable!(),
         }
-
-        // 3. Validasi Keunikan Data (PRIMARY KEY & UNIQUE)
-        for (i, col) in columns.iter().enumerate() {
-            if col.is_primary_key()
-                || col
-                    .constraints
-                    .iter()
-                    .any(|c| matches!(c, ColumnConstraint::Unique))
-            {
-                let new_val = &row_values[i];
-
-                if !new_val.is_null() {
-                    let is_duplicate = self
-                        .rows
-                        .iter()
-                        .any(|existing_row| existing_row.values().get(i) == Some(new_val));
-
-                    if is_duplicate {
-                        return Err(DomainError::EvaluationError(format!(
-                            "Pelanggaran UNIQUE / PRIMARY KEY constraint pada kolom '{}' dengan nilai '{:?}'",
-                            col.name, new_val
-                        )));
-                    }
-                }
-            }
-        }
-
-        // 4. Validasi Schema (Tipe data, NOT NULL, CHECK constraint)
-        self.schema.validate_row(&row_values)?;
-
-        // 5. Simpan baris data jika lolos semua validasi
-        let row = Row::new(row_values);
-        self.rows.push(row);
-        Ok(())
     }
 }

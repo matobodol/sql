@@ -114,3 +114,13 @@ fn is_zero(val: &SqlValue) -> bool {
         _ => false,
     }
 }
+
+/// Helper khusus untuk mengevaluasi klausa WHERE.
+/// Mengembalikan `true` jika dan hanya jika ekspresi bernilai `SqlValue::Bool(true)`.
+pub fn eval_where(expr: &Expr, schema: &Schema, row: &Row) -> Result<bool, DomainError> {
+    let result = eval_expr(expr, schema, row)?;
+    match result {
+        SqlValue::Bool(b) => Ok(b),
+        _ => Ok(false), // Null atau tipe non-bool dianggap false dalam klausa WHERE
+    }
+}

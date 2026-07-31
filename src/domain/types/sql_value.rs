@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{DomainError, SqlBool, SqlType};
 
 /// Representasi Nilai Data SQL di Runtime
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SqlValue {
     /// bilangan bulat i64

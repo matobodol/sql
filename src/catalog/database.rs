@@ -1,13 +1,14 @@
+use crate::catalog::db_function::alter_table::{AlterEngine, AlterTableAction};
 use crate::catalog::registry::SymbolRegistry;
 use crate::catalog::table::Table;
 use crate::domain::id::TableId;
-use crate::domain::{ColumnDef, DomainError, Schema};
+use crate::domain::{ColumnConstraint, ColumnDef, DomainError, Schema, SqlType};
 use std::collections::HashMap;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Database {
-    pub registry: SymbolRegistry,
-    pub tables: HashMap<TableId, Table>,
+    registry: SymbolRegistry,
+    tables: HashMap<TableId, Table>,
 }
 
 impl Database {
@@ -18,7 +19,8 @@ impl Database {
         }
     }
 
-    /// Accessor untuk SymbolRegistry (Source of Truth)
+    // --- ACCESSORS (Source of Truth) ---
+
     pub fn registry(&self) -> &SymbolRegistry {
         &self.registry
     }
@@ -27,15 +29,21 @@ impl Database {
         &mut self.registry
     }
 
+    pub fn tables(&self) -> &HashMap<TableId, Table> {
+        &self.tables
+    }
+
+    pub(crate) fn tables_mut(&mut self) -> &mut HashMap<TableId, Table> {
+        &mut self.tables
+    }
+
+    // --- TABLE MANAGEMENT ---
+
     /// Membuat tabel baru dengan mendaftarkan Table & Columns ke Registry
     pub fn create_table(
         &mut self,
         table_name: &str,
-        raw_columns: Vec<(
-            String,
-            crate::domain::SqlType,
-            Vec<crate::domain::ColumnConstraint>,
-        )>,
+        raw_columns: Vec<(String, SqlType, Vec<ColumnConstraint>)>,
     ) -> Result<TableId, DomainError> {
         // 1. Register Nama Tabel ke Registry -> Mengembalikan TableId
         let table_id = self.registry.register_table(table_name)?;
@@ -83,8 +91,14 @@ impl Database {
             .ok_or_else(|| DomainError::TableNotFound(table_name.to_string()))
     }
 
-    //    /// RENAME COLUMN: Mengubah nama di Registry tanpa menyentuh data fisik di Table!
-    // pub fn rename_column(&mut self, old_name: &str, new_name: &str) -> Result<(), DomainError> {
-    //     self.registry.rename_column(old_name, new_name)
-    // }
+    // --- DDL ENGINE INTEGRATION ---
+
+    /// Pintu masuk utama eksekusi ALTER TABLE (Multi-action & Staging Atomic)
+    pub fn alter_table(
+        &mut self,
+        table_name: &str,
+        actions: Vec<AlterTableAction>,
+    ) -> Result<(), DomainError> {
+        AlterEngine::execute_alter(self, table_name, actions)
+    }
 }
