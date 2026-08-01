@@ -1,87 +1,110 @@
-use crate::catalog::table::Table;
+use std::sync::Arc;
+
+use crate::catalog::database::Database;
 use crate::domain::id::ColumnId;
 use crate::domain::{ColumnDef, DomainError, Row, Schema, SqlType, SqlValue};
 use crate::execution::aggregate::AggregateFunc;
 use crate::execution::operator::PhysicalOperator;
 use crate::execution::sort::OrderByExpr;
-use crate::execution::{
+use crate::expr::Expr;
+use crate::{
     AggregateOperator, FilterOperator, LimitOperator, ProjectionOperator, SeqScanOperator,
     SortOperator,
 };
-use crate::expr::Expr;
 
-/// Pernyataan Query SELECT
+/// Pernyataan Query SELECT (Data Query Language - DQL).
 #[derive(Debug, Clone)]
 pub struct SelectStmt {
-    /// Proyeksi ekspresi (misal: col1, col2, atau ekspresi matematika)
+    /// Proyeksi ekspresi (misal: col1, col2, atau ekspresi matematika).
     pub projection: Vec<Expr>,
-    /// Predikat penyaringan (WHERE)
+    /// Predikat penyaringan (WHERE).
     pub selection: Option<Expr>,
-    /// Kolom GROUP BY
+    /// Kolom GROUP BY.
     pub group_by: Vec<ColumnId>,
-    /// Fungsi Agregat (COUNT, SUM, AVG, MIN, MAX)
+    /// Fungsi Agregat (COUNT, SUM, AVG, MIN, MAX).
     pub aggregates: Vec<AggregateFunc>,
-    /// Aturan pengurutan (ORDER BY)
+    /// Aturan pengurutan (ORDER BY).
     pub order_by: Vec<OrderByExpr>,
-    /// Batas baris (LIMIT)
+    /// Batas maksimum baris (LIMIT).
     pub limit: Option<usize>,
-    /// Pergeseran baris awal (OFFSET)
+    /// Pergeseran baris awal (OFFSET).
     pub offset: usize,
 }
 
-/// Hasil dari eksekusi Query SELECT
+/// Hasil dari eksekusi Query SELECT.
 #[derive(Debug, Clone)]
 pub struct QueryResult {
+    /// Skema output dari baris hasil query.
     pub schema: Schema,
+    /// Baris-baris data hasil query.
     pub rows: Vec<Row>,
 }
 
-/// Eksekutor utama SELECT dengan merangkai Physical Operator Tree
-pub(crate) fn execute_select(table: &Table, stmt: SelectStmt) -> Result<QueryResult, DomainError> {
-    let base_schema = table.schema().clone();
-    let base_rows = table.rows().to_vec();
+/// Menjalankan query SELECT dengan 100% Lazy Volcano Execution Pipeline.
+pub fn execute_select(
+    db: &Database,
+    table_name: &str,
+    stmt: SelectStmt,
+) -> Result<QueryResult, DomainError> {
+    let table = db.get_table(table_name)?;
+    let schema = table.schema();
 
-    // 1. Leaf Node: SeqScanOperator
+    // ------------------------------------------------------------------
+    // LANGKAH 1: Inisialisasi Root Operator (SeqScan)
+    // ------------------------------------------------------------------
+    let rows_arc = Arc::new(table.rows().to_vec());
     let mut plan: Box<dyn PhysicalOperator> =
-        Box::new(SeqScanOperator::new(base_schema, base_rows));
+        Box::new(SeqScanOperator::new(rows_arc, schema.clone()));
 
-    // 2. Filter Node (WHERE)
+    // ------------------------------------------------------------------
+    // LANGKAH 2: Tumpuk FilterOperator (WHERE) jika ada predikat
+    // ------------------------------------------------------------------
     if let Some(predicate) = stmt.selection {
         plan = Box::new(FilterOperator::new(plan, predicate));
     }
 
-    // 3. Aggregate Node (GROUP BY & Aggregations)
+    // ------------------------------------------------------------------
+    // LANGKAH 3: Tumpuk AggregateOperator (GROUP BY & Aggregates)
+    // ------------------------------------------------------------------
     if !stmt.group_by.is_empty() || !stmt.aggregates.is_empty() {
-        let agg_output_schema =
-            build_aggregate_schema(plan.schema(), &stmt.group_by, &stmt.aggregates)?;
+        let agg_schema = build_aggregate_schema(plan.schema(), &stmt.group_by, &stmt.aggregates)?;
         plan = Box::new(AggregateOperator::new(
             plan,
             stmt.group_by,
             stmt.aggregates,
-            agg_output_schema,
+            agg_schema,
         ));
     }
 
-    // 4. Sort Node (ORDER BY)
+    // ------------------------------------------------------------------
+    // LANGKAH 4: Tumpuk SortOperator (ORDER BY) jika ada aturan urutan
+    // ------------------------------------------------------------------
     if !stmt.order_by.is_empty() {
         plan = Box::new(SortOperator::new(plan, stmt.order_by));
     }
 
-    // 5. Limit / Offset Node
+    // ------------------------------------------------------------------
+    // LANGKAH 5: Tumpuk ProjectionOperator (SELECT Expressions)
+    // ------------------------------------------------------------------
+    if !stmt.projection.is_empty() {
+        let proj_schema = build_projection_schema(plan.schema(), &stmt.projection)?;
+        plan = Box::new(ProjectionOperator::new(plan, stmt.projection, proj_schema));
+    }
+
+    // ------------------------------------------------------------------
+    // LANGKAH 6: Tumpuk LimitOperator (OFFSET & LIMIT)
+    // ------------------------------------------------------------------
     if stmt.limit.is_some() || stmt.offset > 0 {
         plan = Box::new(LimitOperator::new(plan, stmt.limit, stmt.offset));
     }
 
-    // 6. Projection Node (SELECT expressions)
-    let final_schema = build_projection_schema(plan.schema(), &stmt.projection)?;
-    plan = Box::new(ProjectionOperator::new(
-        plan,
-        stmt.projection,
-        final_schema.clone(),
-    ));
-
-    // 7. Pull Rows dari Volcano Iterator Tree
+    // ------------------------------------------------------------------
+    // LANGKAH 7: Eksekusi Pipeline secara Lazy (Pull Data)
+    // ------------------------------------------------------------------
+    let final_schema = plan.schema().clone();
     let mut result_rows = Vec::new();
+
+    // Data baru ditarik/dievaluasi secara lazy saat loop ini berjalan!
     while let Some(row) = plan.next()? {
         result_rows.push(row);
     }
@@ -92,15 +115,18 @@ pub(crate) fn execute_select(table: &Table, stmt: SelectStmt) -> Result<QueryRes
     })
 }
 
-/// Helper pembangun skema output untuk Aggregate Operator
-fn build_aggregate_schema(
+// ----------------------------------------------------------------------
+// HELPER FUNCTIONS FOR SCHEMA BUILDING
+// ----------------------------------------------------------------------
+
+/// Helper internal pembangun skema output untuk Aggregate Operator.
+pub(crate) fn build_aggregate_schema(
     child_schema: &Schema,
     group_by: &[ColumnId],
     aggregates: &[AggregateFunc],
 ) -> Result<Schema, DomainError> {
     let mut cols = Vec::new();
 
-    // Kolom group by dipertahankan di skema hasil
     for &col_id in group_by {
         let col_def = child_schema.get_column_by_id(col_id).ok_or_else(|| {
             DomainError::EvaluationError(format!(
@@ -111,7 +137,6 @@ fn build_aggregate_schema(
         cols.push(col_def.clone());
     }
 
-    // Kolom hasil agregasi ditambahkan
     for (i, agg) in aggregates.iter().enumerate() {
         let name = match agg {
             AggregateFunc::Count(_) => format!("count_{i}"),
@@ -120,7 +145,7 @@ fn build_aggregate_schema(
             AggregateFunc::Min(_) => format!("min_{i}"),
             AggregateFunc::Max(_) => format!("max_{i}"),
         };
-        // Agregat seperti SUM/COUNT umumnya bertipe Int atau Float
+
         cols.push(ColumnDef::new(
             ColumnId(9900 + i as u32),
             name,
@@ -131,15 +156,14 @@ fn build_aggregate_schema(
     Schema::new(cols)
 }
 
-/// Helper pembangun skema output untuk Projection Operator
-fn build_projection_schema(
+/// Helper internal pembangun skema output untuk Projection Operator.
+pub(crate) fn build_projection_schema(
     child_schema: &Schema,
     projection: &[Expr],
 ) -> Result<Schema, DomainError> {
     let mut cols = Vec::with_capacity(projection.len());
 
     for (i, expr) in projection.iter().enumerate() {
-        // Penentuan tipe data sederhana untuk kolom hasil proyeksi
         let col_type = match expr {
             Expr::Column(col_id) => {
                 let def = child_schema.get_column_by_id(*col_id).ok_or_else(|| {
@@ -161,8 +185,7 @@ fn build_projection_schema(
                 SqlValue::Time(_) => SqlType::Time,
                 SqlValue::Null => SqlType::Int,
             },
-
-            _ => SqlType::Text, // Default fallback untuk ekspresi kompleks
+            _ => SqlType::Text,
         };
 
         cols.push(ColumnDef::new(

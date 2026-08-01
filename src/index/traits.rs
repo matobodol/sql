@@ -1,30 +1,33 @@
-use crate::domain::domain_error::DomainError;
-use crate::domain::id::RowId; // Menggunakan RowId dari domain::id kamu
-use crate::domain::types::sql_value::SqlValue;
 use std::fmt::Debug;
+use std::ops::Bound;
 
+use crate::domain::domain_error::DomainError;
+use crate::domain::id::RowId;
+use crate::domain::types::sql_value::SqlValue;
+
+/// Trait abstrak untuk seluruh jenis pengindeksan di database engine.
 pub trait Index: Debug + Send + Sync {
-    /// Helper untuk melakukan cloning pada Box<dyn Index>
+    /// Membuat salinan tertutup (boxed clone) dari instance indeks.
     fn clone_box(&self) -> Box<dyn Index>;
 
-    /// Menyisipkan nilai kolom & RowId ke dalam indeks.
-    /// Jika `is_unique` bernilai true dan key sudah ada, mengembalikan `DomainError`.
+    /// Memasukkan entri `(SqlValue, RowId)` ke dalam indeks secara atomik.
     fn insert(&mut self, key: SqlValue, row_id: RowId) -> Result<(), DomainError>;
 
-    /// Menghapus pasangan key dan RowId dari indeks.
+    /// Menghapus `RowId` tertentu yang terasosiasi dengan `key`.
     fn remove(&mut self, key: &SqlValue, row_id: RowId) -> Result<(), DomainError>;
 
-    /// Pencarian presisi O(log N) untuk klausa WHERE col = val / Unique Check.
+    /// Mencari seluruh `RowId` yang cocok persis (*exact match*) dengan `key`.
     fn lookup(&self, key: &SqlValue) -> Vec<RowId>;
 
-    /// Pencarian jangkauan (Range Query) untuk WHERE col >= min AND col <= max.
-    fn range_lookup(&self, min: Option<&SqlValue>, max: Option<&SqlValue>) -> Vec<RowId>;
+    /// Mencari seluruh `RowId` dalam batas rentang (*range query*) dinamis.
+    ///
+    /// Menerima `std::ops::Bound` untuk mendukung operator `>`, `>=`, `<`, dan `<=`.
+    fn range_lookup(&self, min: Bound<&SqlValue>, max: Bound<&SqlValue>) -> Vec<RowId>;
 
-    /// Apakah indeks ini menegakkan aturan keunikan (PRIMARY KEY / UNIQUE).
+    /// Memeriksa apakah indeks dikonfigurasi sebagai UNIQUE index.
     fn is_unique(&self) -> bool;
 }
 
-// Implementasikan Clone khusus untuk Box<dyn Index>
 impl Clone for Box<dyn Index> {
     fn clone(&self) -> Self {
         self.clone_box()

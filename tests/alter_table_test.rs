@@ -37,7 +37,7 @@ fn test_multi_add_column_success() {
     ];
 
     // 1. Eksekusi multi-action
-    let result = db.alter_table("users", actions);
+    let result = db.execute_alter("users", actions);
     assert!(
         result.is_ok(),
         "Eksekusi multi-action AddColumn harus sukses"
@@ -53,9 +53,10 @@ fn test_multi_add_column_success() {
     assert_eq!(schema.columns()[2].name, "status");
 
     // 3. Verifikasi SymbolRegistry: Kolom-kolom baru harus terdaftar
-    assert!(db.registry().get_column_id("id").is_some());
-    assert!(db.registry().get_column_id("name").is_some());
-    assert!(db.registry().get_column_id("status").is_some());
+    let tableid = db.registry().get_table_id("users").unwrap();
+    assert!(db.registry().get_column_id(tableid, "id").is_some());
+    assert!(db.registry().get_column_id(tableid, "name").is_some());
+    assert!(db.registry().get_column_id(tableid, "status").is_some());
 }
 
 #[test]
@@ -83,7 +84,7 @@ fn test_multi_add_column_failure_rollback() {
     ];
 
     // 1. Eksekusi multi-action (harus mengembalikan Error)
-    let result = db.alter_table("users", actions);
+    let result = db.execute_alter("users", actions);
     assert!(
         result.is_err(),
         "Harus gagal karena ada aksi penambahan kolom duplikat"
@@ -95,6 +96,7 @@ fn test_multi_add_column_failure_rollback() {
         .get_table("users")
         .expect("Tabel 'users' harus tetap ada");
     let schema = table.schema();
+    let tableid = db.registry().get_table_id("users").unwrap();
 
     assert_eq!(
         schema.columns().len(),
@@ -104,11 +106,11 @@ fn test_multi_add_column_failure_rollback() {
 
     // 3. Verifikasi SymbolRegistry: Mapping ID untuk 'id' dan 'name' juga harus bersih/dibatalkan
     assert!(
-        db.registry().get_column_id("id").is_none(),
+        db.registry().get_column_id(tableid, "id").is_none(),
         "'id' tidak boleh terdaftar di SymbolRegistry jika transaksi rollback"
     );
     assert!(
-        db.registry().get_column_id("name").is_none(),
+        db.registry().get_column_id(tableid, "name").is_none(),
         "'name' tidak boleh terdaftar di SymbolRegistry jika transaksi rollback"
     );
 }
@@ -119,7 +121,7 @@ fn test_add_constraint_not_null_failure_and_rollback() {
     db.create_table("products", vec![]).unwrap();
 
     // 1. Tambah kolom 'price' (opsional/nullable)
-    db.alter_table(
+    db.execute_alter(
         "products",
         vec![AlterTableAction::AddColumn {
             name: "price".to_string(),
@@ -133,7 +135,7 @@ fn test_add_constraint_not_null_failure_and_rollback() {
     // (Misal ada row eksisting yang harganya Null)
 
     // 3. Coba tambahkan constraint NOT NULL -> Harus Gagal jika data ber-NULL
-    let _result = db.alter_table(
+    let _result = db.execute_alter(
         "products",
         vec![AlterTableAction::AddConstraint {
             col_name: "price".to_string(),
@@ -151,7 +153,7 @@ fn test_set_and_drop_default_value() {
     db.create_table("settings", vec![]).unwrap();
 
     // 1. Tambahkan kolom 'theme' tanpa default
-    db.alter_table(
+    db.execute_alter(
         "settings",
         vec![AlterTableAction::AddColumn {
             name: "theme".to_string(),
@@ -162,7 +164,7 @@ fn test_set_and_drop_default_value() {
     .unwrap();
 
     // 2. Pasang SetDefault -> 'dark'
-    db.alter_table(
+    db.execute_alter(
         "settings",
         vec![AlterTableAction::SetDefault {
             col_name: "theme".to_string(),
@@ -181,7 +183,7 @@ fn test_set_and_drop_default_value() {
     );
 
     // 3. Drop Default (SetDefault -> None)
-    db.alter_table(
+    db.execute_alter(
         "settings",
         vec![AlterTableAction::SetDefault {
             col_name: "theme".to_string(),

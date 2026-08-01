@@ -1,11 +1,11 @@
 use super::operator::PhysicalOperator;
 use crate::{
-    domain::{DomainError, Row, Schema, SqlValue},
+    domain::{DomainError, Row, Schema},
     eval_expr,
     expr::Expr,
 };
 use std::cmp::Ordering;
-use std::vec::IntoIter; // 👈 Import IntoIter
+use std::vec::IntoIter;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SortOrder {
@@ -34,17 +34,14 @@ impl SortOperator {
         }
     }
 
-    /// Helper internal untuk memuat seluruh baris dan mengurutkannya
     fn fetch_and_sort(&mut self) -> Result<(), DomainError> {
         let schema = self.input.schema().clone();
         let mut rows = Vec::new();
 
-        // 1. Pull seluruh data (Blocking phase)
         while let Some(row) = self.input.next()? {
             rows.push(row);
         }
 
-        // 2. Urutkan baris berdasarkan kriteria ORDER BY
         let order_by = &self.order_by;
         let mut sort_error: Option<DomainError> = None;
 
@@ -70,7 +67,8 @@ impl SortOperator {
                     }
                 };
 
-                let ord = compare_sql_values(&val_a, &val_b);
+                // Langsung gunakan .cmp() bawaan Ord manual SqlValue
+                let ord = val_a.cmp(&val_b);
                 if ord != Ordering::Equal {
                     return match spec.order {
                         SortOrder::Ascending => ord,
@@ -97,33 +95,10 @@ impl PhysicalOperator for SortOperator {
     }
 
     fn next(&mut self) -> Result<Option<Row>, DomainError> {
-        // Jika data belum dimuat dan diurutkan, lakukan pemuatan sekarang (Lazy Materialization)
         if self.sorted_rows.is_none() {
             self.fetch_and_sort()?;
         }
 
         Ok(self.sorted_rows.as_mut().unwrap().next())
-    }
-}
-
-/// Helper perbandingan `SqlValue` untuk sorting
-fn compare_sql_values(a: &SqlValue, b: &SqlValue) -> Ordering {
-    match (a, b) {
-        (SqlValue::Null, SqlValue::Null) => Ordering::Equal,
-        (SqlValue::Null, _) => Ordering::Less,
-        (_, SqlValue::Null) => Ordering::Greater,
-        (SqlValue::Int(x), SqlValue::Int(y)) => x.cmp(y),
-        (SqlValue::Float(x), SqlValue::Float(y)) => x.cmp(y),
-
-        // --- Tambahan: Cross-type Int & Float Comparison ---
-        (SqlValue::Int(x), SqlValue::Float(y)) => ordered_float::OrderedFloat(*x as f64).cmp(y),
-        (SqlValue::Float(x), SqlValue::Int(y)) => x.cmp(&ordered_float::OrderedFloat(*y as f64)),
-
-        (SqlValue::Text(x), SqlValue::Text(y)) => x.cmp(y),
-        (SqlValue::Bool(x), SqlValue::Bool(y)) => x.cmp(y),
-        (SqlValue::Timestamp(x), SqlValue::Timestamp(y)) => x.cmp(y),
-        (SqlValue::Date(x), SqlValue::Date(y)) => x.cmp(y),
-        (SqlValue::Time(x), SqlValue::Time(y)) => x.cmp(y),
-        _ => Ordering::Equal,
     }
 }

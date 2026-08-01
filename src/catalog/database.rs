@@ -3,7 +3,7 @@ use crate::catalog::registry::SymbolRegistry;
 use crate::catalog::table::Table;
 use crate::domain::id::TableId;
 use crate::domain::{ColumnConstraint, ColumnDef, DomainError, Schema, SqlType};
-use crate::execute_alter;
+use crate::{QueryResult, SelectStmt, execute_alter, execute_select};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Default)]
@@ -34,7 +34,7 @@ impl Database {
         &self.tables
     }
 
-    pub(crate) fn tables_mut(&mut self) -> &mut HashMap<TableId, Table> {
+    pub fn tables_mut(&mut self) -> &mut HashMap<TableId, Table> {
         &mut self.tables
     }
 
@@ -49,10 +49,10 @@ impl Database {
         // 1. Register Nama Tabel ke Registry -> Mengembalikan TableId
         let table_id = self.registry.register_table(table_name)?;
 
-        // 2. Register Setiap Nama Kolom ke Registry -> Mengembalikan ColumnId unik
+        // 2. Register Setiap Nama Kolom terikat dengan TableId
         let mut column_defs = Vec::with_capacity(raw_columns.len());
         for (col_name, sql_type, constraints) in raw_columns {
-            let col_id = self.registry.register_column(&col_name);
+            let col_id = self.registry.register_column(table_id, &col_name);
             column_defs.push(ColumnDef::with_constraints(
                 col_id,
                 col_name,
@@ -95,11 +95,21 @@ impl Database {
     // --- DDL ENGINE INTEGRATION ---
 
     /// Pintu masuk utama eksekusi ALTER TABLE (Multi-action & Staging Atomic)
-    pub fn alter_table(
+    pub fn execute_alter(
         &mut self,
         table_name: &str,
         actions: Vec<AlterTableAction>,
     ) -> Result<(), DomainError> {
         execute_alter(self, table_name, actions)
+    }
+
+    /// Pintu masuk utama untuk seluruh aksi DQL (SELECT).
+    /// Menggunakan `&self` (read-only) untuk mendukung concurrent reads dan zero-copy scanning.
+    pub fn execute_select(
+        &self,
+        table_name: &str,
+        stmt: SelectStmt,
+    ) -> Result<QueryResult, DomainError> {
+        execute_select(self, table_name, stmt)
     }
 }

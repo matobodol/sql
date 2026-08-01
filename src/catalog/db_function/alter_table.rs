@@ -2,43 +2,44 @@ use crate::catalog::database::Database;
 use crate::domain::{ColumnConstraint, ColumnDef, DomainError, Schema, SqlType, SqlValue};
 use std::collections::HashSet;
 
-/// Representasi Aksi ALTER TABLE berstandar ANSI SQL
+/// Representasi Aksi ALTER TABLE berstandar ANSI SQL.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AlterTableAction {
+    /// Menambahkan kolom baru ke tabel.
     AddColumn {
         name: String,
         sql_type: SqlType,
         constraints: Vec<ColumnConstraint>,
     },
-    DropColumn {
-        name: String,
-    },
-    RenameColumn {
-        old_name: String,
-        new_name: String,
-    },
-    RenameTable {
-        new_name: String,
-    },
-    ModifyColumnType {
-        name: String,
-        new_type: SqlType,
-    },
+    /// Menghapus kolom dari tabel.
+    DropColumn { name: String },
+    /// Mengubah nama kolom pada tabel.
+    RenameColumn { old_name: String, new_name: String },
+    /// Mengubah nama tabel.
+    RenameTable { new_name: String },
+    /// Mengubah tipe data kolom.
+    ModifyColumnType { name: String, new_type: SqlType },
+    /// Menambahkan batasan (constraint) baru ke kolom.
     AddConstraint {
         col_name: String,
         constraint: ColumnConstraint,
     },
+    /// Menghapus batasan (constraint) dari kolom.
     DropConstraint {
         col_name: String,
         constraint: ColumnConstraint,
     },
+    /// Mengatur nilai default baru pada kolom.
     SetDefault {
         col_name: String,
         default_val: Option<SqlValue>,
     },
 }
 
-// impl AlterEngine {
+/// Menjalankan serangkaian aksi ALTER TABLE secara transaksi atomik (staging).
+///
+/// Jika salah satu aksi gagal, perubahan pada staging `db_staging` dibatalkan
+/// dan tidak di-commit ke `db` utama.
 pub(crate) fn execute_alter(
     db: &mut Database,
     table_name: &str,
@@ -121,6 +122,7 @@ pub(crate) fn execute_alter(
 
 // --- PRIVATE HANDLER FUNCTIONS ---
 
+/// Eksekutor internal untuk menambahkan kolom baru.
 fn execute_add_column(
     db: &mut Database,
     table_name: &str,
@@ -128,7 +130,12 @@ fn execute_add_column(
     sql_type: SqlType,
     constraints: Vec<ColumnConstraint>,
 ) -> Result<(), DomainError> {
-    let col_id = db.registry_mut().register_column(col_name);
+    let table_id = db
+        .registry()
+        .get_table_id(table_name)
+        .ok_or_else(|| DomainError::TableNotFound(table_name.to_string()))?;
+
+    let col_id = db.registry_mut().register_column(table_id, col_name);
 
     let new_col_def = ColumnDef::with_constraints(col_id, col_name, sql_type, constraints);
     let default_val = new_col_def
@@ -150,14 +157,23 @@ fn execute_add_column(
     Ok(())
 }
 
+/// Eksekutor internal untuk menghapus kolom dari tabel.
 fn execute_drop_column(
     db: &mut Database,
     table_name: &str,
     col_name: &str,
 ) -> Result<(), DomainError> {
-    let col_id = db.registry().get_column_id(col_name).ok_or_else(|| {
-        DomainError::EvaluationError(format!("Kolom '{col_name}' tidak ditemukan"))
-    })?;
+    let table_id = db
+        .registry()
+        .get_table_id(table_name)
+        .ok_or_else(|| DomainError::TableNotFound(table_name.to_string()))?;
+
+    let col_id = db
+        .registry()
+        .get_column_id(table_id, col_name)
+        .ok_or_else(|| {
+            DomainError::EvaluationError(format!("Kolom '{col_name}' tidak ditemukan"))
+        })?;
 
     let table = db.get_table_mut(table_name)?;
 
@@ -182,17 +198,25 @@ fn execute_drop_column(
     Ok(())
 }
 
+/// Eksekutor internal untuk mengubah nama kolom.
 fn execute_rename_column(
     db: &mut Database,
     table_name: &str,
     old_name: &str,
     new_name: &str,
 ) -> Result<(), DomainError> {
-    let col_id = db.registry().get_column_id(old_name).ok_or_else(|| {
-        DomainError::EvaluationError(format!("Kolom '{old_name}' tidak ditemukan"))
-    })?;
+    let table_id = db
+        .registry()
+        .get_table_id(table_name)
+        .ok_or_else(|| DomainError::TableNotFound(table_name.to_string()))?;
 
-    db.registry_mut().rename_column(old_name, new_name)?;
+    let col_id = db
+        .registry()
+        .get_column_id(table_id, old_name)
+        .ok_or_else(|| DomainError::ColumnNotFound(old_name.to_string()))?;
+
+    db.registry_mut()
+        .rename_column(table_id, old_name, new_name)?;
 
     let table = db.get_table_mut(table_name)?;
     table.schema_mut().rename_column(col_id, new_name)?;
@@ -200,6 +224,7 @@ fn execute_rename_column(
     Ok(())
 }
 
+/// Eksekutor internal untuk mengubah nama tabel.
 fn execute_rename_table(
     db: &mut Database,
     old_name: &str,
@@ -210,9 +235,7 @@ fn execute_rename_table(
         .get_table_id(old_name)
         .ok_or_else(|| DomainError::TableNotFound(old_name.to_string()))?;
 
-    if db.registry().get_table_id(new_name).is_some() {
-        return Err(DomainError::TableAlreadyExists(new_name.to_string()));
-    }
+    db.registry_mut().rename_table(old_name, new_name)?;
 
     let table = db.tables_mut().get_mut(&table_id).unwrap();
     table.set_name(new_name);
@@ -220,15 +243,24 @@ fn execute_rename_table(
     Ok(())
 }
 
+/// Eksekutor internal untuk mengubah tipe data kolom dan melakukan konversi data baris.
 fn execute_modify_column_type(
     db: &mut Database,
     table_name: &str,
     col_name: &str,
     new_type: SqlType,
 ) -> Result<(), DomainError> {
-    let col_id = db.registry().get_column_id(col_name).ok_or_else(|| {
-        DomainError::EvaluationError(format!("Kolom '{col_name}' tidak ditemukan"))
-    })?;
+    let table_id = db
+        .registry()
+        .get_table_id(table_name)
+        .ok_or_else(|| DomainError::TableNotFound(table_name.to_string()))?;
+
+    let col_id = db
+        .registry()
+        .get_column_id(table_id, col_name)
+        .ok_or_else(|| {
+            DomainError::EvaluationError(format!("Kolom '{col_name}' tidak ditemukan"))
+        })?;
 
     let table = db.get_table_mut(table_name)?;
 
@@ -257,15 +289,24 @@ fn execute_modify_column_type(
     Ok(())
 }
 
+/// Eksekutor internal untuk menambahkan batasan/constraint baru pada kolom.
 fn execute_add_constraint(
     db: &mut Database,
     table_name: &str,
     col_name: &str,
     constraint: ColumnConstraint,
 ) -> Result<(), DomainError> {
-    let col_id = db.registry().get_column_id(col_name).ok_or_else(|| {
-        DomainError::EvaluationError(format!("Kolom '{col_name}' tidak ditemukan"))
-    })?;
+    let table_id = db
+        .registry()
+        .get_table_id(table_name)
+        .ok_or_else(|| DomainError::TableNotFound(table_name.to_string()))?;
+
+    let col_id = db
+        .registry()
+        .get_column_id(table_id, col_name)
+        .ok_or_else(|| {
+            DomainError::EvaluationError(format!("Kolom '{col_name}' tidak ditemukan"))
+        })?;
 
     let table = db.get_table_mut(table_name)?;
 
@@ -348,15 +389,24 @@ fn execute_add_constraint(
     Ok(())
 }
 
+/// Eksekutor internal untuk menghapus batasan/constraint dari kolom.
 fn execute_drop_constraint(
     db: &mut Database,
     table_name: &str,
     col_name: &str,
     constraint: &ColumnConstraint,
 ) -> Result<(), DomainError> {
-    let col_id = db.registry().get_column_id(col_name).ok_or_else(|| {
-        DomainError::EvaluationError(format!("Kolom '{col_name}' tidak ditemukan"))
-    })?;
+    let table_id = db
+        .registry()
+        .get_table_id(table_name)
+        .ok_or_else(|| DomainError::TableNotFound(table_name.to_string()))?;
+
+    let col_id = db
+        .registry()
+        .get_column_id(table_id, col_name)
+        .ok_or_else(|| {
+            DomainError::EvaluationError(format!("Kolom '{col_name}' tidak ditemukan"))
+        })?;
 
     let table = db.get_table_mut(table_name)?;
     table
@@ -366,15 +416,24 @@ fn execute_drop_constraint(
     Ok(())
 }
 
+/// Eksekutor internal untuk mengatur nilai default kolom.
 fn execute_set_default(
     db: &mut Database,
     table_name: &str,
     col_name: &str,
     default_val: Option<SqlValue>,
 ) -> Result<(), DomainError> {
-    let col_id = db.registry().get_column_id(col_name).ok_or_else(|| {
-        DomainError::EvaluationError(format!("Kolom '{col_name}' tidak ditemukan"))
-    })?;
+    let table_id = db
+        .registry()
+        .get_table_id(table_name)
+        .ok_or_else(|| DomainError::TableNotFound(table_name.to_string()))?;
+
+    let col_id = db
+        .registry()
+        .get_column_id(table_id, col_name)
+        .ok_or_else(|| {
+            DomainError::EvaluationError(format!("Kolom '{col_name}' tidak ditemukan"))
+        })?;
 
     let table = db.get_table_mut(table_name)?;
     table.schema_mut().set_column_default(col_id, default_val)?;

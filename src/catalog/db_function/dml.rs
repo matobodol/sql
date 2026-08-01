@@ -4,31 +4,34 @@ use crate::domain::id::{ColumnId, RowId};
 use crate::domain::{AutoIncrement, DomainError, Row, SqlValue};
 use std::collections::HashMap;
 
-/// Representasi Aksi Data Manipulation Language (DML)
+/// Representasi Aksi Data Manipulation Language (DML).
 #[derive(Debug, Clone, PartialEq)]
 pub enum DmlAction {
-    /// BULK INSERT: INSERT INTO table (rows...)
+    /// BULK INSERT: Menyisipkan satu atau beberapa baris data ke tabel.
     Insert { rows: Vec<Vec<SqlValue>> },
 
-    /// UPDATE table SET col1 = expr1, col2 = expr2 WHERE predicate
+    /// UPDATE: Memperbarui nilai kolom berdasarkan kondisi predicate.
     Update {
         assignments: HashMap<ColumnId, Expr>,
         predicate: Option<Expr>,
     },
 
-    /// DELETE FROM table WHERE predicate
+    /// DELETE: Menghapus baris berdasarkan kondisi predicate.
     Delete { predicate: Option<Expr> },
 }
 
-/// Hasil eksekusi operasi DML
+/// Hasil eksekusi operasi DML.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DmlResult {
+    /// Jumlah baris yang berhasil disisipkan.
     Inserted(usize),
+    /// Jumlah baris yang berhasil diperbarui.
     Updated(usize),
+    /// Jumlah baris yang berhasil dihapus.
     Deleted(usize),
 }
 
-/// Eksekutor terpusat untuk DML Action
+/// Eksekutor terpusat untuk menjalankan operasi DML pada tabel.
 pub(crate) fn execute_dml(table: &mut Table, action: DmlAction) -> Result<DmlResult, DomainError> {
     match action {
         DmlAction::Insert { rows } => {
@@ -51,7 +54,7 @@ pub(crate) fn execute_dml(table: &mut Table, action: DmlAction) -> Result<DmlRes
 
 // --- PRIVATE HANDLERS ---
 
-/// Menerapkan Multiple Insert dengan Garansi All-or-Nothing (Atomic Staging)
+/// Menerapkan penyisipan data (Insert) dengan Garansi Atomik All-or-Nothing.
 fn handle_insert(table: &mut Table, raw_rows: Vec<Vec<SqlValue>>) -> Result<usize, DomainError> {
     if raw_rows.is_empty() {
         return Ok(0);
@@ -60,7 +63,7 @@ fn handle_insert(table: &mut Table, raw_rows: Vec<Vec<SqlValue>>) -> Result<usiz
     let columns = table.schema().columns().to_vec();
     let total_rows = raw_rows.len();
 
-    // Staging struct untuk menampung baris data yang sudah tervalidasi & siap commit
+    /// Struct internal staging untuk menyiapkan baris sebelum commit.
     struct StagedRow {
         row_id: RowId,
         prepared_values: Vec<SqlValue>,
@@ -68,21 +71,14 @@ fn handle_insert(table: &mut Table, raw_rows: Vec<Vec<SqlValue>>) -> Result<usiz
     }
 
     let mut staged_rows = Vec::with_capacity(total_rows);
-
-    // Kloning state auto-increment counter untuk staging phase
     let mut staged_counters = table.auto_increment_counters().clone();
     let mut next_row_id = table.next_row_id();
 
-    // ==========================================
-    // PHASE 1: STAGING & VALIDASI (ALL-OR-NOTHING)
-    // ==========================================
     for mut row_values in raw_rows {
-        // 1. Pad array jika nilainya kurang dari jumlah kolom di schema
         if row_values.len() < columns.len() {
             row_values.resize(columns.len(), SqlValue::Null);
         }
 
-        // 2. Transformasi AutoIncrement & Default Value (di Staging Counter)
         for (i, col) in columns.iter().enumerate() {
             let is_null = row_values[i].is_null();
 
@@ -117,7 +113,6 @@ fn handle_insert(table: &mut Table, raw_rows: Vec<Vec<SqlValue>>) -> Result<usiz
             }
         }
 
-        // 3. Validasi Schema & Constraints
         table.schema().validate_row(&row_values)?;
 
         let staged_row_id = RowId::from(next_row_id);
@@ -136,7 +131,7 @@ fn handle_insert(table: &mut Table, raw_rows: Vec<Vec<SqlValue>>) -> Result<usiz
         });
     }
 
-    // Dynamic dry-run ke IndexRegistry (Cek Unique Violation antar row di batch & terhadap DB)
+    // Dry-run index
     let mut rolled_back_entries: Vec<(RowId, Vec<(ColumnId, SqlValue)>)> = Vec::new();
 
     for staged in &staged_rows {
@@ -144,7 +139,6 @@ fn handle_insert(table: &mut Table, raw_rows: Vec<Vec<SqlValue>>) -> Result<usiz
             .index_registry_mut()
             .insert_entry(staged.row_id, &staged.index_entries)
         {
-            // Jika 1 row saja gagal di dry-run, bersihkan index yang terlanjur terpasang di dry-run
             for (rb_id, rb_entries) in rolled_back_entries {
                 let _ = table.index_registry_mut().remove_entry(rb_id, &rb_entries);
             }
@@ -153,14 +147,11 @@ fn handle_insert(table: &mut Table, raw_rows: Vec<Vec<SqlValue>>) -> Result<usiz
         rolled_back_entries.push((staged.row_id, staged.index_entries.clone()));
     }
 
-    // ==========================================
-    // PHASE 2: COMMIT PHASE (GARANSI PASTI LOLOS)
-    // ==========================================
-    // Commit AutoIncrement Counter & RowId
+    // COMMIT PHASE
     *table.auto_increment_counters_mut() = staged_counters;
 
     for staged in staged_rows {
-        let row = Row::new(staged.prepared_values);
+        let row = Row::with_id(staged.row_id, staged.prepared_values);
         table.rows_mut().push(row);
         table.increment_next_row_id();
     }
@@ -168,6 +159,7 @@ fn handle_insert(table: &mut Table, raw_rows: Vec<Vec<SqlValue>>) -> Result<usiz
     Ok(total_rows)
 }
 
+/// Menerapkan pembaruan data (Update) dengan penanganan `RowId` dan indeks yang konsisten.
 fn handle_update(
     table: &mut Table,
     assignments: &HashMap<ColumnId, Expr>,
@@ -176,7 +168,7 @@ fn handle_update(
     let columns = table.schema().columns().to_vec();
     let schema = table.schema().clone();
 
-    // Struct penampung staging perubahan per baris
+    /// Struct internal staging untuk pembaruan baris.
     struct StagedUpdate {
         row_idx: usize,
         row_id: RowId,
@@ -187,9 +179,6 @@ fn handle_update(
 
     let mut staged_updates = Vec::new();
 
-    // ==========================================
-    // PHASE 1: EVALUASI & STAGING (ALL-OR-NOTHING)
-    // ==========================================
     for (idx, row) in table.rows().iter().enumerate() {
         let matches_condition = match predicate {
             Some(expr) => eval_where(expr, &schema, row)?,
@@ -197,10 +186,9 @@ fn handle_update(
         };
 
         if matches_condition {
-            let row_id = RowId::from((idx + 1) as u64);
+            let row_id = row.id();
             let mut new_values = row.values().to_vec();
 
-            // 1. Evaluasi ekspresi assignment
             for (col_idx, col) in columns.iter().enumerate() {
                 if let Some(new_expr) = assignments.get(&col.id) {
                     let evaluated_val = eval_expr(new_expr, &schema, row)?;
@@ -208,7 +196,6 @@ fn handle_update(
                 }
             }
 
-            // 2. Validasi skema (NOT NULL, CHECK, Types)
             schema.validate_row(&new_values)?;
 
             let old_entries: Vec<(ColumnId, SqlValue)> = columns
@@ -237,31 +224,24 @@ fn handle_update(
         return Ok(0);
     }
 
-    // 3. Dry-Run Index Update (Simulasi pergantian indeks)
-    // Mencabut indeks lama & memasukkan indeks baru secara temporary
     let mut modified_indexes = Vec::new();
 
     for staged in &staged_updates {
-        // Cabut entri lama
         if let Err(err) = table
             .index_registry_mut()
             .remove_entry(staged.row_id, &staged.old_entries)
         {
-            // Rollback indeks yang sudah terlanjur diubah di dry-run
             rollback_index_changes(table, modified_indexes);
             return Err(err);
         }
 
-        // Pasang entri baru (Cek UNIQUE constraint)
         if let Err(err) = table
             .index_registry_mut()
             .insert_entry(staged.row_id, &staged.new_entries)
         {
-            // Revert row ini
             let _ = table
                 .index_registry_mut()
                 .insert_entry(staged.row_id, &staged.old_entries);
-            // Rollback seluruh indeks sebelumnya
             rollback_index_changes(table, modified_indexes);
             return Err(err);
         }
@@ -269,19 +249,18 @@ fn handle_update(
         modified_indexes.push((staged.row_id, &staged.old_entries, &staged.new_entries));
     }
 
-    // ==========================================
-    // PHASE 2: COMMIT PHYSICAL ROWS (PASTI SUCCESS)
-    // ==========================================
+    // COMMIT PHYSICAL ROWS
     let updated_count = staged_updates.len();
 
     for staged in staged_updates {
-        table.rows_mut()[staged.row_idx] = Row::new(staged.new_row_values);
+        let row_id = table.rows()[staged.row_idx].id();
+        table.rows_mut()[staged.row_idx] = Row::with_id(row_id, staged.new_row_values);
     }
 
     Ok(updated_count)
 }
 
-/// Helper internal untuk mengembalikan kondisi Indeks jika Staging UPDATE gagal
+/// Helper internal untuk mengembalikan kondisi Indeks jika Staging UPDATE gagal.
 fn rollback_index_changes(
     table: &mut Table,
     modified_indexes: Vec<(
@@ -296,6 +275,7 @@ fn rollback_index_changes(
     }
 }
 
+/// Menerapkan penghapusan data (Delete) secara aman.
 fn handle_delete(table: &mut Table, predicate: Option<&Expr>) -> Result<usize, DomainError> {
     let columns = table.schema().columns().to_vec();
     let schema = table.schema().clone();
@@ -308,7 +288,7 @@ fn handle_delete(table: &mut Table, predicate: Option<&Expr>) -> Result<usize, D
         };
 
         if matches_condition {
-            let row_id = RowId::from((idx + 1) as u64);
+            let row_id = row.id();
 
             let index_entries: Vec<(ColumnId, SqlValue)> = columns
                 .iter()
@@ -322,7 +302,7 @@ fn handle_delete(table: &mut Table, predicate: Option<&Expr>) -> Result<usize, D
 
     let deleted_count = rows_to_delete.len();
 
-    // Hapus dari indeks & hapus baris fisik dari posisi belakang agar indeks array tidak geser
+    // Hapus dari indeks & hapus baris fisik dari posisi belakang
     for (idx, row_id, index_entries) in rows_to_delete.into_iter().rev() {
         table
             .index_registry_mut()

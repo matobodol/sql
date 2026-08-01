@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{DomainError, SqlBool, SqlType};
 
 /// Representasi Nilai Data SQL di Runtime
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SqlValue {
     /// bilangan bulat i64
@@ -62,20 +62,29 @@ impl SqlValue {
     // --- PARSER HELPER FOR MANUAL INPUT ---
 
     /// Parse manual dari String ke Date ("YYYY-MM-DD")
-    pub fn parse_date(input: &str) -> Result<Self, String> {
+    pub fn parse_date(input: &str) -> Result<Self, DomainError> {
         NaiveDate::parse_from_str(input, "%Y-%m-%d")
             .map(SqlValue::Date)
-            .map_err(|e| format!("Format tanggal salah (Gunakan YYYY-MM-DD): {e}"))
+            .map_err(|e| {
+                DomainError::InvalidExpression(format!(
+                    "Format tanggal '{input}' salah (Gunakan YYYY-MM-DD): {e}"
+                ))
+            })
     }
 
     /// Parse manual dari String ke Time ("HH:MM:SS" atau "HH:MM")
-    pub fn parse_time(input: &str) -> Result<Self, String> {
+    pub fn parse_time(input: &str) -> Result<Self, DomainError> {
         if let Ok(t) = NaiveTime::parse_from_str(input, "%H:%M:%S") {
             return Ok(SqlValue::Time(t));
         }
+
         NaiveTime::parse_from_str(input, "%H:%M")
             .map(SqlValue::Time)
-            .map_err(|e| format!("Format waktu salah (Gunakan HH:MM:SS atau HH:MM): {e}"))
+            .map_err(|e| {
+                DomainError::InvalidExpression(format!(
+                    "Format waktu '{input}' salah (Gunakan HH:MM:SS atau HH:MM): {e}"
+                ))
+            })
     }
 
     // --- VALIDASI TIPE ---

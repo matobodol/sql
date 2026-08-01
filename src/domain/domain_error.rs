@@ -20,6 +20,12 @@ pub enum DomainError {
         found: &'static str,
     },
 
+    #[error("Kolom '{0}' tidak ditemukan")]
+    ColumnNotFound(String),
+
+    #[error("Kolom '{0}' sudah ada")]
+    ColumnAlreadyExists(String),
+
     #[error("Tabel '{0}' tidak ditemukan")]
     TableNotFound(String),
 

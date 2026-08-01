@@ -5,14 +5,15 @@ use crate::domain::id::{ColumnId, RowId};
 use crate::domain::types::sql_value::SqlValue;
 use std::collections::HashMap;
 
+/// Registry pengelola seluruh indeks yang terdaftar pada sebuah tabel.
 #[derive(Debug, Clone, Default)]
 pub struct IndexRegistry {
-    /// Pemetaan dari ColumnId ke Indeks terkait.
-    /// Satu kolom saat ini dipetakan ke 1 instance Index (BTreeIndex).
+    /// Pemetaan dari `ColumnId` ke implementasi `Index`.
     indexes: HashMap<ColumnId, Box<dyn Index>>,
 }
 
 impl IndexRegistry {
+    /// Inisialisasi registry indeks kosong.
     pub fn new() -> Self {
         Self {
             indexes: HashMap::new(),
@@ -37,7 +38,7 @@ impl IndexRegistry {
         Ok(())
     }
 
-    /// Menghapus indeks pada kolom tertentu (misal saat DROP COLUMN atau DROP INDEX).
+    /// Menghapus indeks pada kolom tertentu.
     pub fn drop_index(&mut self, col_id: ColumnId) -> Option<Box<dyn Index>> {
         self.indexes.remove(&col_id)
     }
@@ -52,37 +53,32 @@ impl IndexRegistry {
         self.indexes.get(&col_id).map(|idx| idx.as_ref())
     }
 
-    /// Menyisipkan nilai ke SEMUA indeks yang relevan saat ada baris baru (INSERT).
-    /// `row_values`: Slice/Map berisi pasangan (ColumnId, SqlValue) milik baris baru.
+    /// Mendaftarkan entri baru ke seluruh indeks yang relevan secara atomik (dengan fitur rollback otomatis).
     pub fn insert_entry(
         &mut self,
         row_id: RowId,
-        row_values: &[(ColumnId, SqlValue)],
+        entries: &[(ColumnId, SqlValue)],
     ) -> Result<(), DomainError> {
-        // Step 1: Validasi terlebih dahulu keunikan (UNIQUE check) di semua indeks sebelum melakukan penulisan.
-        // Ini menjaga atomisitas agar tidak ada indeks yang terisi setengah jalan jika ada konflik keunikan.
-        for (col_id, val) in row_values {
-            if let Some(index) = self.indexes.get(col_id) {
-                if index.is_unique() && !index.lookup(val).is_empty() {
-                    return Err(DomainError::EvaluationError(format!(
-                        "Pelanggaran keunikan indeks untuk ColumnId {:?}: Nilai '{:?}' sudah ada",
-                        col_id, val
-                    )));
-                }
-            }
-        }
+        let mut inserted_indexes = Vec::new();
 
-        // Step 2: Jika semua aman, lakukan mutasi insersi ke seluruh indeks
-        for (col_id, val) in row_values {
+        for (col_id, val) in entries {
             if let Some(index) = self.indexes.get_mut(col_id) {
-                index.insert(val.clone(), row_id)?;
+                if let Err(err) = index.insert(val.clone(), row_id) {
+                    for (rb_col_id, rb_val) in inserted_indexes {
+                        if let Some(rb_index) = self.indexes.get_mut(&rb_col_id) {
+                            let _ = rb_index.remove(&rb_val, row_id);
+                        }
+                    }
+                    return Err(err);
+                }
+                inserted_indexes.push((*col_id, val.clone()));
             }
         }
 
         Ok(())
     }
 
-    /// Menghapus entri dari SEMUA indeks saat suatu baris dihapus (DELETE).
+    /// Menghapus entri baris dari seluruh indeks terdaftar pada tabel saat operasi DELETE atau UPDATE.
     pub fn remove_entry(
         &mut self,
         row_id: RowId,

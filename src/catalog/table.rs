@@ -2,7 +2,7 @@ use crate::catalog::db_function::dml::{DmlAction, DmlResult, execute_dml};
 use crate::domain::id::{ColumnId, TableId};
 use crate::domain::{ColumnConstraint, DomainError, Row, Schema};
 use crate::index::IndexRegistry;
-use crate::{AutoIncrement, QueryResult, SelectStmt, SqlValue, execute_select};
+use crate::{AutoIncrement, SqlValue};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -121,11 +121,6 @@ impl Table {
     /// Pintu masuk utama untuk seluruh aksi DML (INSERT, UPDATE, DELETE)
     pub fn execute_dml(&mut self, action: DmlAction) -> Result<DmlResult, DomainError> {
         execute_dml(self, action)
-    }
-
-    /// Pintu masuk utama untuk seluruh aksi DQL (SELECT)
-    pub fn execute_select(&mut self, stmt: SelectStmt) -> Result<QueryResult, DomainError> {
-        execute_select(self, stmt)
     }
 
     /// Helper instan untuk Single Insert (Convenience Wrapper)

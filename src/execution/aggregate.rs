@@ -1,8 +1,8 @@
-use ordered_float::OrderedFloat;
-
 use crate::domain::id::ColumnId;
 use crate::domain::{DomainError, Row, Schema, SqlValue};
 use crate::execution::operator::PhysicalOperator;
+use ordered_float::OrderedFloat;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::vec::IntoIter;
 
@@ -60,7 +60,7 @@ impl Accumulator {
                 if !val.is_null() {
                     match acc_val {
                         Some(cur) => {
-                            if val.lt(cur).is_true() {
+                            if val.cmp(cur) == Ordering::Less {
                                 *acc_val = Some(val.clone());
                             }
                         }
@@ -72,7 +72,7 @@ impl Accumulator {
                 if !val.is_null() {
                     match acc_val {
                         Some(cur) => {
-                            if val.gt(cur).is_true() {
+                            if val.cmp(cur) == Ordering::Greater {
                                 *acc_val = Some(val.clone());
                             }
                         }
@@ -148,7 +148,6 @@ impl AggregateOperator {
     }
 
     fn fetch_and_aggregate(&mut self) -> Result<(), DomainError> {
-        // 1. Pre-calculate seluruh indeks kolom di awal dan LEPAS borrow schema!
         let (group_indices, agg_target_indices) = {
             let child_schema = self.input.schema();
 
@@ -181,12 +180,10 @@ impl AggregateOperator {
                 .collect::<Result<_, _>>()?;
 
             (g_indices, a_indices)
-        }; // 👈 Borrow child_schema berakhir di sini!
+        };
 
-        // 2. State penampung agregat
         let mut groups: HashMap<Vec<SqlValue>, Vec<Accumulator>> = HashMap::new();
 
-        // 3. Sekarang aman untuk memanggil self.input.next()? secara mutable
         while let Some(row) = self.input.next()? {
             let group_key: Vec<SqlValue> =
                 group_indices.iter().map(|&idx| row[idx].clone()).collect();
@@ -199,13 +196,12 @@ impl AggregateOperator {
                 let dummy_one = SqlValue::Int(1);
                 let val = match target_idx {
                     Some(idx) => &row[*idx],
-                    None => &dummy_one, // Nilai dummy untuk COUNT(*)
+                    None => &dummy_one,
                 };
                 acc.update(val)?;
             }
         }
 
-        // 4. Bangun final rows
         let mut final_rows = Vec::new();
         for (group_key, accumulators) in groups {
             let mut row_values = group_key;

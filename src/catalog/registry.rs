@@ -7,8 +7,8 @@ pub struct SymbolRegistry {
     column_id_gen: IdGenerator,
     table_id_gen: IdGenerator,
 
-    // Mapping Column: Name <-> ID
-    col_name_to_id: HashMap<String, ColumnId>,
+    // Mapping Column: (TableId, Name) <-> ID
+    col_name_to_id: HashMap<(TableId, String), ColumnId>,
     col_id_to_name: HashMap<ColumnId, String>,
 
     // Mapping Table: Name <-> ID
@@ -28,51 +28,51 @@ impl SymbolRegistry {
         }
     }
 
-    // --- COLUMN REGISTRY ---
+    // --- COLUMN REGISTRY (SCOPED TO TABLE) ---
 
-    /// Mendaftarkan nama kolom baru (jika belum ada) dan mengembalikan ColumnId-nya
-    pub fn register_column(&mut self, name: &str) -> ColumnId {
-        let name_lower = name.to_lowercase();
-        if let Some(&id) = self.col_name_to_id.get(&name_lower) {
+    pub fn register_column(&mut self, table_id: TableId, name: &str) -> ColumnId {
+        let key = (table_id, name.to_lowercase());
+        if let Some(&id) = self.col_name_to_id.get(&key) {
             return id;
         }
 
         let new_id = ColumnId(self.column_id_gen.next_id());
-        self.col_name_to_id.insert(name_lower, new_id);
+        self.col_name_to_id.insert(key, new_id);
         self.col_id_to_name.insert(new_id, name.to_string());
         new_id
     }
 
-    pub fn get_column_id(&self, name: &str) -> Option<ColumnId> {
-        self.col_name_to_id.get(&name.to_lowercase()).copied()
+    pub fn get_column_id(&self, table_id: TableId, name: &str) -> Option<ColumnId> {
+        let key = (table_id, name.to_lowercase());
+        self.col_name_to_id.get(&key).copied()
     }
 
     pub fn get_column_name(&self, id: ColumnId) -> Option<&str> {
         self.col_id_to_name.get(&id).map(|s| s.as_str())
     }
 
-    /// RENAME COLUMN: Operasi O(1) tanpa menyentuh data tabel
-    pub fn rename_column(&mut self, old_name: &str, new_name: &str) -> Result<(), DomainError> {
-        let old_lower = old_name.to_lowercase();
-        let new_lower = new_name.to_lowercase();
+    pub fn rename_column(
+        &mut self,
+        table_id: TableId,
+        old_name: &str,
+        new_name: &str,
+    ) -> Result<(), DomainError> {
+        let old_key = (table_id, old_name.to_lowercase());
+        let new_key = (table_id, new_name.to_lowercase());
 
-        let id = self.col_name_to_id.remove(&old_lower).ok_or_else(|| {
-            DomainError::EvaluationError(format!(
-                "Kolom '{}' tidak ditemukan di Registry",
-                old_name
-            ))
+        let id = self.col_name_to_id.remove(&old_key).ok_or_else(|| {
+            DomainError::ColumnNotFound(format!("Kolom '{}' tidak ditemukan di Registry", old_name))
         })?;
 
-        if self.col_name_to_id.contains_key(&new_lower) {
-            // Restore jika bentrok
-            self.col_name_to_id.insert(old_lower, id);
-            return Err(DomainError::EvaluationError(format!(
+        if self.col_name_to_id.contains_key(&new_key) {
+            self.col_name_to_id.insert(old_key, id);
+            return Err(DomainError::ColumnAlreadyExists(format!(
                 "Nama kolom baru '{}' sudah terpakai di Registry",
                 new_name
             )));
         }
 
-        self.col_name_to_id.insert(new_lower, id);
+        self.col_name_to_id.insert(new_key, id);
         self.col_id_to_name.insert(id, new_name.to_string());
         Ok(())
     }
@@ -97,5 +97,26 @@ impl SymbolRegistry {
 
     pub fn get_table_name(&self, id: TableId) -> Option<&str> {
         self.table_id_to_name.get(&id).map(|s| s.as_str())
+    }
+
+    pub fn rename_table(&mut self, old_name: &str, new_name: &str) -> Result<(), DomainError> {
+        let old_lower = old_name.to_lowercase();
+        let new_lower = new_name.to_lowercase();
+
+        let id = self.table_name_to_id.remove(&old_lower).ok_or_else(|| {
+            DomainError::TableNotFound(format!("Table '{}' tidak ditemukan di Registry", old_name))
+        })?;
+
+        if self.table_name_to_id.contains_key(&new_lower) {
+            self.table_name_to_id.insert(old_lower, id);
+            return Err(DomainError::TableAlreadyExists(format!(
+                "Nama Table baru '{}' sudah terpakai di Registry",
+                new_name
+            )));
+        }
+
+        self.table_name_to_id.insert(new_lower, id);
+        self.table_id_to_name.insert(id, new_name.to_string());
+        Ok(())
     }
 }
