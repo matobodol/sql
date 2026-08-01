@@ -97,6 +97,18 @@ impl Row {
     pub fn push(&mut self, value: SqlValue) {
         self.values.push(value);
     }
+
+    /// Mendeserialisasi slice byte mentah menjadi instance `Row`.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, DomainError> {
+        bincode::deserialize(bytes)
+            .map_err(|e| DomainError::EvaluationError(format!("Gagal mendeserialisasi row: {e}")))
+    }
+
+    /// Menserialisasi instance `Row` menjadi representasi vektor byte (`Vec<u8>`).
+    pub fn to_bytes(&self) -> Result<Vec<u8>, DomainError> {
+        bincode::serialize(self)
+            .map_err(|e| DomainError::EvaluationError(format!("Gagal menserialisasi row: {e}")))
+    }
 }
 
 /// Konversi dari `Vec<SqlValue>` ke `Row` dengan default `RowId(0)`.

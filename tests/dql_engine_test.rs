@@ -4,6 +4,7 @@ use ordered_float::OrderedFloat;
 
 // Adjust import sesuai nama crate milikmu
 use sql::{
+    MemoryRowIterator,
     binary_op::BinaryOp,
     catalog::registry::SymbolRegistry,
     domain::{ColumnDef, DomainError, Row, Schema, SqlType, SqlValue, id::ColumnId},
@@ -78,8 +79,9 @@ fn test_volcano_scan_and_filter() -> Result<(), DomainError> {
     // Bungkus rows ke dalam Arc
     let rows_arc = Arc::new(rows);
 
-    // Tidak perlu anotasi lifetime `'_`, Box sepenuhnya 'static dan bersih!
-    let scan = Box::new(SeqScanOperator::new(rows_arc, schema));
+    // Bungkus ke dalam MemoryRowIterator terlebih dahulu
+    let memory_iter = Box::new(MemoryRowIterator::new(rows_arc));
+    let scan = Box::new(SeqScanOperator::new(memory_iter, schema));
 
     // Predikat: is_active = true AND score > 80.0
     let pred_active = Expr::Binary {
@@ -120,8 +122,9 @@ fn test_volcano_pipeline_select_sort_limit() -> Result<(), DomainError> {
     // Bungkus rows ke dalam Arc
     let rows_arc = Arc::new(rows);
 
-    // Tidak perlu anotasi lifetime `'_`, Box sepenuhnya 'static dan bersih!
-    let scan = Box::new(SeqScanOperator::new(rows_arc, schema));
+    // Bungkus ke dalam MemoryRowIterator terlebih dahulu
+    let memory_iter = Box::new(MemoryRowIterator::new(rows_arc));
+    let scan = Box::new(SeqScanOperator::new(memory_iter, schema));
 
     // Projection Schema (name, score)
     let proj_schema = Schema::new(vec![
@@ -162,8 +165,9 @@ fn test_volcano_aggregate_group_by() -> Result<(), DomainError> {
     // Bungkus rows ke dalam Arc
     let rows_arc = Arc::new(rows);
 
-    // Tidak perlu anotasi lifetime `'_`, Box sepenuhnya 'static dan bersih!
-    let scan = Box::new(SeqScanOperator::new(rows_arc, schema));
+    // Bungkus ke dalam MemoryRowIterator terlebih dahulu
+    let memory_iter = Box::new(MemoryRowIterator::new(rows_arc));
+    let scan = Box::new(SeqScanOperator::new(memory_iter, schema));
 
     let dummy_agg_count_id = ColumnId(100);
     let dummy_agg_min_id = ColumnId(101);
@@ -217,8 +221,9 @@ fn test_volcano_3vl_null_filtering() -> Result<(), DomainError> {
     // Bungkus rows ke dalam Arc
     let rows_arc = Arc::new(rows);
 
-    // Tidak perlu anotasi lifetime `'_`, Box sepenuhnya 'static dan bersih!
-    let scan = Box::new(SeqScanOperator::new(rows_arc, schema));
+    // Bungkus ke dalam MemoryRowIterator terlebih dahulu
+    let memory_iter = Box::new(MemoryRowIterator::new(rows_arc));
+    let scan = Box::new(SeqScanOperator::new(memory_iter, schema));
 
     let pred_eq = Expr::Binary {
         left: Box::new(Expr::Column(col_score)),

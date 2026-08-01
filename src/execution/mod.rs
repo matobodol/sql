@@ -1,3 +1,5 @@
+pub mod iterator;
+
 pub mod aggregate;
 pub mod filter;
 pub mod limit;
@@ -8,6 +10,7 @@ pub mod sort;
 
 pub use aggregate::{AggregateFunc, AggregateOperator};
 pub use filter::FilterOperator;
+pub use iterator::{MemoryRowIterator, RowIterator};
 pub use limit::LimitOperator;
 pub use operator::PhysicalOperator;
 pub use projection::ProjectionOperator;

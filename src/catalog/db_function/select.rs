@@ -8,35 +8,26 @@ use crate::execution::operator::PhysicalOperator;
 use crate::execution::sort::OrderByExpr;
 use crate::expr::Expr;
 use crate::{
-    AggregateOperator, FilterOperator, LimitOperator, ProjectionOperator, SeqScanOperator,
-    SortOperator,
+    AggregateOperator, FilterOperator, LimitOperator, MemoryRowIterator, ProjectionOperator,
+    SeqScanOperator, SortOperator,
 };
 
 /// Pernyataan Query SELECT (Data Query Language - DQL).
 #[derive(Debug, Clone)]
 pub struct SelectStmt {
-    /// Proyeksi ekspresi (misal: col1, col2, atau ekspresi matematika).
     pub projection: Vec<Expr>,
-    /// Predikat penyaringan (WHERE).
     pub selection: Option<Expr>,
-    /// Kolom GROUP BY.
     pub group_by: Vec<ColumnId>,
-    /// Fungsi Agregat (COUNT, SUM, AVG, MIN, MAX).
     pub aggregates: Vec<AggregateFunc>,
-    /// Aturan pengurutan (ORDER BY).
     pub order_by: Vec<OrderByExpr>,
-    /// Batas maksimum baris (LIMIT).
     pub limit: Option<usize>,
-    /// Pergeseran baris awal (OFFSET).
     pub offset: usize,
 }
 
 /// Hasil dari eksekusi Query SELECT.
 #[derive(Debug, Clone)]
 pub struct QueryResult {
-    /// Skema output dari baris hasil query.
     pub schema: Schema,
-    /// Baris-baris data hasil query.
     pub rows: Vec<Row>,
 }
 
@@ -50,11 +41,13 @@ pub fn execute_select(
     let schema = table.schema();
 
     // ------------------------------------------------------------------
-    // LANGKAH 1: Inisialisasi Root Operator (SeqScan)
+    // LANGKAH 1: Inisialisasi Root Operator (SeqScan via MemoryRowIterator)
     // ------------------------------------------------------------------
     let rows_arc = Arc::new(table.rows().to_vec());
+    let memory_iter = Box::new(MemoryRowIterator::new(rows_arc));
+
     let mut plan: Box<dyn PhysicalOperator> =
-        Box::new(SeqScanOperator::new(rows_arc, schema.clone()));
+        Box::new(SeqScanOperator::new(memory_iter, schema.clone()));
 
     // ------------------------------------------------------------------
     // LANGKAH 2: Tumpuk FilterOperator (WHERE) jika ada predikat
@@ -104,7 +97,6 @@ pub fn execute_select(
     let final_schema = plan.schema().clone();
     let mut result_rows = Vec::new();
 
-    // Data baru ditarik/dievaluasi secara lazy saat loop ini berjalan!
     while let Some(row) = plan.next()? {
         result_rows.push(row);
     }
