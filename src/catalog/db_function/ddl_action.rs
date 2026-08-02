@@ -1,5 +1,6 @@
 use crate::catalog::database::Database;
 use crate::domain::{ColumnConstraint, ColumnDef, DomainError, Schema, SqlType, SqlValue};
+use crate::{Table, TableId};
 use std::collections::HashSet;
 
 /// Enum tingkat tinggi untuk memisahkan jenis-jenis DDL (ANSI SQL)
@@ -19,17 +20,15 @@ pub enum DdlAction {
     },
 }
 
-impl Database {
-    /// Memberikan kemampuan eksekusi DdlAction langsung dari Facade Database
-    pub fn execute_ddl(&mut self, action: DdlAction) -> Result<(), DomainError> {
-        match action {
-            DdlAction::CreateTable { name, columns } => {
-                self.create_table(&name, columns)?;
-                Ok(())
-            }
-            DdlAction::DropTable { name } => self.drop_table(&name),
-            DdlAction::AlterTable { name, actions } => self.execute_alter(&name, actions),
+/// Memberikan kemampuan eksekusi DdlAction langsung dari Facade Database
+pub(crate) fn execute_ddl(db: &mut Database, action: DdlAction) -> Result<(), DomainError> {
+    match action {
+        DdlAction::CreateTable { name, columns } => {
+            create_table(db, &name, columns)?;
+            Ok(())
         }
+        DdlAction::DropTable { name } => drop_table(db, &name),
+        DdlAction::AlterTable { name, actions } => db.execute_alter(&name, actions),
     }
 }
 
@@ -154,6 +153,54 @@ pub(crate) fn execute_alter(
 }
 
 // --- PRIVATE HANDLER FUNCTIONS ---
+
+/// Eksekutor internal untuk membuat tabel dan register.
+fn create_table(
+    db: &mut Database,
+    table_name: &str,
+    raw_columns: Vec<(String, SqlType, Vec<ColumnConstraint>)>,
+) -> Result<TableId, DomainError> {
+    // 1. Register tabel ke registry
+    let table_id = db.registry_mut().register_table(table_name)?;
+
+    // Helper closure untuk rollback registry jika terjadi error di tengah jalan
+    let build_schema = || {
+        let mut column_defs = Vec::with_capacity(raw_columns.len());
+        for (col_name, sql_type, constraints) in raw_columns {
+            let col_id = db.registry_mut().register_column(table_id, &col_name);
+            column_defs.push(ColumnDef::with_constraints(
+                col_id,
+                col_name,
+                sql_type,
+                constraints,
+            ));
+        }
+
+        Schema::new(column_defs)
+    };
+
+    // 2. Buat skema. Jika GAGAL, bersihkan registry agar tidak ada ID menggantung!
+    let schema = match build_schema() {
+        Ok(s) => s,
+        Err(err) => {
+            let _ = db.registry_mut().unregister_table(table_name);
+            return Err(err);
+        }
+    };
+
+    // 3. Simpan tabel ke HashMap
+    let table = Table::new(table_id, table_name, schema);
+    db.tables_mut().insert(table_id, table);
+
+    Ok(table_id)
+}
+
+/// Eksekutor internal untuk menghapus tabel dan unregister dari registry.
+fn drop_table(db: &mut Database, table_name: &str) -> Result<(), DomainError> {
+    let table_id = db.registry_mut().unregister_table(table_name)?;
+    db.tables_mut().remove(&table_id);
+    Ok(())
+}
 
 /// Eksekutor internal untuk menambahkan kolom baru.
 fn execute_add_column(

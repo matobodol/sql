@@ -1,15 +1,3 @@
-// #[derive(Debug, Clone, PartialEq, Eq)]
-// pub enum BinaryOp {
-//     Eq,    // =
-//     NotEq, // != / <>
-//     Gt,    // >
-//     Lt,    // <
-//     GtEq,  // >=
-//     LtEq,  // <=
-//     And,   // AND
-//     Or,    // OR
-// }
-
 use serde::{Deserialize, Serialize};
 
 /// Operator perbandingan dan logika SQL
@@ -30,4 +18,6 @@ pub enum BinaryOp {
     // Logical
     And,
     Or,
+
+    Like,
 }

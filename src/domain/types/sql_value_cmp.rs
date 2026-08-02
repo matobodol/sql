@@ -16,6 +16,8 @@ fn variant_index(val: &SqlValue) -> usize {
         SqlValue::Timestamp(_) => 6,
         SqlValue::Date(_) => 7,
         SqlValue::Time(_) => 8,
+        SqlValue::Enum { type_name: _, .. } => 9,
+        SqlValue::Custom { type_name: _, .. } => 10,
     }
 }
 
@@ -103,7 +105,7 @@ impl Ord for SqlValue {
             (SqlValue::Null, _) => Ordering::Less,
             (_, SqlValue::Null) => Ordering::Greater,
 
-            // Perbandingan Tipe Sama
+            // Perbandingan Tipe Sama Primitif
             (SqlValue::Int(x), SqlValue::Int(y)) => x.cmp(y),
             (SqlValue::Float(x), SqlValue::Float(y)) => x.cmp(y),
 
@@ -119,8 +121,31 @@ impl Ord for SqlValue {
             (SqlValue::Time(x), SqlValue::Time(y)) => x.cmp(y),
             (SqlValue::Bytes(x), SqlValue::Bytes(y)) => x.cmp(y),
 
+            // Perbandingan Enum Type Sama (Cek 'defined' dulu, baru 'value')
+            (
+                SqlValue::Enum {
+                    type_name: t1,
+                    value: v1,
+                },
+                SqlValue::Enum {
+                    type_name: t2,
+                    value: v2,
+                },
+            ) => t1.cmp(t2).then_with(|| v1.cmp(v2)),
+
+            // Perbandingan Custom Type Sama (Cek 'type_name' dulu, baru 'value')
+            (
+                SqlValue::Custom {
+                    type_name: t1,
+                    value: v1,
+                },
+                SqlValue::Custom {
+                    type_name: t2,
+                    value: v2,
+                },
+            ) => t1.cmp(t2).then_with(|| v1.cmp(v2)),
+
             // Fallback ANSI SQL: Tipe beda total diurutkan berdasarkan indeks varian
-            // Memastikan "abc" == 10 TIDAK PERNAH bernilai Ordering::Equal
             (a, b) => variant_index(a).cmp(&variant_index(b)),
         }
     }

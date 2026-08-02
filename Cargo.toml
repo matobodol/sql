@@ -4,12 +4,12 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+storage = { path = "../storage" }
+
 chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-
 rmp-serde = { workspace = true }
-
+regex = { workspace = true }
 ordered-float = { workspace = true }
 thiserror = { workspace = true }
-storage = { path = "../storage" }

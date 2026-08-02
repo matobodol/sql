@@ -1,30 +1,45 @@
+//! Physical operator untuk eksekusi fungsi agregasi SQL (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`)
+//! serta pengelompokan baris data (`GROUP BY`).
+
 use crate::domain::id::ColumnId;
 use crate::domain::{DomainError, Row, Schema, SqlValue};
 use crate::execution::operator::PhysicalOperator;
-use ordered_float::OrderedFloat;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::vec::IntoIter;
 
+/// Jenis-jenis fungsi agregasi yang didukung oleh engine SQL.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AggregateFunc {
+    /// Menghitung jumlah baris/nilai yang tidak NULL. `None` merepresentasikan `COUNT(*)`.
     Count(Option<ColumnId>),
+    /// Menjumlahkan seluruh nilai pada kolom tertentu.
     Sum(ColumnId),
+    /// Menghitung rata-rata nilai pada kolom tertentu.
     Avg(ColumnId),
+    /// Mencari nilai minimum pada kolom tertentu.
     Min(ColumnId),
+    /// Mencari nilai maksimum pada kolom tertentu.
     Max(ColumnId),
 }
 
+/// Akumulator stateful untuk memelihara status agregasi pada satu grup selama pemrosesan stream.
 #[derive(Debug, Clone)]
 pub enum Accumulator {
+    /// Akumulator untuk fungsi `COUNT`.
     Count(i64),
+    /// Akumulator untuk fungsi `SUM`.
     Sum(SqlValue),
+    /// Akumulator untuk fungsi `AVG`, menyimpan akumulasi jumlah total dan total frekuensi nilai.
     Avg { sum: SqlValue, count: i64 },
+    /// Akumulator untuk fungsi `MIN`.
     Min(Option<SqlValue>),
+    /// Akumulator untuk fungsi `MAX`.
     Max(Option<SqlValue>),
 }
 
 impl Accumulator {
+    /// Membuat akumulator baru yang diinisialisasi berdasarkan `AggregateFunc`.
     pub fn new(func: &AggregateFunc) -> Self {
         match func {
             AggregateFunc::Count(_) => Accumulator::Count(0),
@@ -38,6 +53,9 @@ impl Accumulator {
         }
     }
 
+    /// Memperbarui status akumulator dengan nilai baru dari baris data yang sedang diproses.
+    ///
+    /// Aturan SQL: Nilai `NULL` diabaikan oleh sebagian besar fungsi agregasi.
     pub fn update(&mut self, val: &SqlValue) -> Result<(), DomainError> {
         match self {
             Accumulator::Count(c) => {
@@ -47,12 +65,12 @@ impl Accumulator {
             }
             Accumulator::Sum(acc_val) => {
                 if !val.is_null() {
-                    *acc_val = add_sql_values(acc_val, val)?;
+                    *acc_val = acc_val.add(val)?; // Menggunakan operasi penambahan SSOT pada SqlValue
                 }
             }
             Accumulator::Avg { sum, count } => {
                 if !val.is_null() {
-                    *sum = add_sql_values(sum, val)?;
+                    *sum = sum.add(val)?; // Menggunakan operasi penambahan SSOT pada SqlValue
                     *count += 1;
                 }
             }
@@ -84,21 +102,17 @@ impl Accumulator {
         Ok(())
     }
 
+    /// Mengevaluasi dan menghasilkan nilai `SqlValue` akhir dari status akumulator.
     pub fn evaluate(&self) -> SqlValue {
         match self {
             Accumulator::Count(c) => SqlValue::Int(*c),
             Accumulator::Sum(val) => val.clone(),
             Accumulator::Avg { sum, count } => {
-                if *count == 0 {
+                if *count == 0 || sum.is_null() {
                     SqlValue::Null
                 } else {
-                    match sum {
-                        SqlValue::Int(s) => {
-                            SqlValue::Float(OrderedFloat::from((*s as f64) / (*count as f64)))
-                        }
-                        SqlValue::Float(s) => SqlValue::Float(*s / (*count as f64)),
-                        _ => SqlValue::Null,
-                    }
+                    // Menggunakan method .div() SSOT milik SqlValue
+                    sum.div(&SqlValue::Int(*count)).unwrap_or(SqlValue::Null)
                 }
             }
             Accumulator::Min(val) => val.clone().unwrap_or(SqlValue::Null),
@@ -107,31 +121,22 @@ impl Accumulator {
     }
 }
 
-fn add_sql_values(a: &SqlValue, b: &SqlValue) -> Result<SqlValue, DomainError> {
-    match (a, b) {
-        (SqlValue::Null, val) => Ok(val.clone()),
-        (val, SqlValue::Null) => Ok(val.clone()),
-        (SqlValue::Int(x), SqlValue::Int(y)) => Ok(SqlValue::Int(x + y)),
-        (SqlValue::Float(x), SqlValue::Float(y)) => Ok(SqlValue::Float(x + y)),
-        (SqlValue::Int(x), SqlValue::Float(y)) => {
-            Ok(SqlValue::Float(OrderedFloat::from(*x as f64) + y))
-        }
-        (SqlValue::Float(x), SqlValue::Int(y)) => Ok(SqlValue::Float(x + *y as f64)),
-        _ => Err(DomainError::EvaluationError(
-            "Tipe data tidak cocok untuk penjumlahan agregasi".into(),
-        )),
-    }
-}
-
+/// Physical operator yang bertanggung jawab mengeksekusi operasi agregasi dan `GROUP BY`.
 pub struct AggregateOperator {
+    /// Operator anak yang memasok input stream data.
     input: Box<dyn PhysicalOperator>,
+    /// Daftar ID kolom yang digunakan sebagai kunci pengelompokan (`GROUP BY`).
     group_by_cols: Vec<ColumnId>,
+    /// Daftar fungsi agregasi yang akan dihitung per grup.
     aggregates: Vec<AggregateFunc>,
+    /// Skema keluaran dari operator agregasi ini.
     output_schema: Schema,
+    /// Cache baris hasil agregasi yang siap diteruskan ke pipeline berikutnya.
     aggregated_rows: Option<IntoIter<Row>>,
 }
 
 impl AggregateOperator {
+    /// Membuat instance `AggregateOperator` baru.
     pub fn new(
         input: Box<dyn PhysicalOperator>,
         group_by_cols: Vec<ColumnId>,
@@ -147,6 +152,8 @@ impl AggregateOperator {
         }
     }
 
+    /// Membaca seluruh data input stream, melakukan proses pengelompokan kunci (Hash-based Aggregation),
+    /// dan mengevaluasi seluruh nilai agregat.
     fn fetch_and_aggregate(&mut self) -> Result<(), DomainError> {
         let (group_indices, agg_target_indices) = {
             let child_schema = self.input.schema();
@@ -183,6 +190,7 @@ impl AggregateOperator {
         };
 
         let mut groups: HashMap<Vec<SqlValue>, Vec<Accumulator>> = HashMap::new();
+        let count_star_dummy = SqlValue::Int(1);
 
         while let Some(row) = self.input.next()? {
             let group_key: Vec<SqlValue> =
@@ -193,10 +201,9 @@ impl AggregateOperator {
                 .or_insert_with(|| self.aggregates.iter().map(Accumulator::new).collect());
 
             for (acc, target_idx) in accumulators.iter_mut().zip(&agg_target_indices) {
-                let dummy_one = SqlValue::Int(1);
                 let val = match target_idx {
                     Some(idx) => &row[*idx],
-                    None => &dummy_one,
+                    None => &count_star_dummy,
                 };
                 acc.update(val)?;
             }

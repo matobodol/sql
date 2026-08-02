@@ -1,99 +1,61 @@
-use std::sync::Arc;
+//! Modul aksi eksekusi DQL (Data Query Language) untuk mengeksekusi query `SELECT` dan perintah katalog `SHOW`.
 
+use crate::RowId;
 use crate::catalog::database::Database;
 use crate::domain::id::ColumnId;
 use crate::domain::{ColumnDef, DomainError, Row, Schema, SqlType, SqlValue};
 use crate::execution::aggregate::AggregateFunc;
-use crate::execution::operator::PhysicalOperator;
 use crate::execution::sort::OrderByExpr;
 use crate::expr::Expr;
-use crate::{
-    AggregateOperator, FilterOperator, LimitOperator, MemoryRowIterator, ProjectionOperator,
-    SeqScanOperator, SortOperator,
-};
+use crate::planner::PhysicalPlanner;
 
-/// Pernyataan Query SELECT (Data Query Language - DQL).
+/// Pernyataan Query `SELECT` (Data Query Language - DQL).
 #[derive(Debug, Clone)]
 pub struct SelectStmt {
+    /// Daftar ekspresi hasil proyeksi (`SELECT col1, expr2, ...`).
     pub projection: Vec<Expr>,
+    /// Kondisi predikat penyaringan baris (`WHERE ...`).
     pub selection: Option<Expr>,
+    /// Daftar ID kolom untuk kunci pengelompokan (`GROUP BY ...`).
     pub group_by: Vec<ColumnId>,
+    /// Daftar fungsi agregasi yang akan dievaluasi (`COUNT`, `SUM`, `AVG`, dll).
     pub aggregates: Vec<AggregateFunc>,
+    /// Aturan pengurutan baris keluaran (`ORDER BY ...`).
     pub order_by: Vec<OrderByExpr>,
+    /// Batas maksimum jumlah baris keluaran (`LIMIT ...`).
     pub limit: Option<usize>,
+    /// Jumlah baris awal yang diabaikan (`OFFSET ...`).
     pub offset: usize,
 }
 
-/// Hasil dari eksekusi Query SELECT.
+/// Hasil dari eksekusi Query DQL (`SELECT` / `SHOW`).
 #[derive(Debug, Clone)]
-pub struct QueryResult {
+pub struct DqlResult {
+    /// Skema kolom dari tabel hasil query.
     pub schema: Schema,
+    /// Daftar baris data yang dihasilkan.
     pub rows: Vec<Row>,
 }
 
-/// Menjalankan query SELECT dengan 100% Lazy Volcano Execution Pipeline.
+/// Jenis kueri inspeksi katalog (`SHOW TABLES`, dll).
+#[derive(Debug, Clone)]
+pub enum Show<'a> {
+    /// Menampilkan seluruh nama tabel dalam basis data.
+    Tables,
+    /// Menampilkan nama tabel yang cocok dengan pola `LIKE`.
+    TablesLike(&'a str),
+}
+
+/// Menjalankan query `SELECT` menggunakan `PhysicalPlanner` dan mengeksekusinya secara *Lazy Volcano Execution*.
 pub fn execute_select(
     db: &Database,
     table_name: &str,
     stmt: SelectStmt,
-) -> Result<QueryResult, DomainError> {
-    let table = db.get_table(table_name)?;
-    let schema = table.schema();
+) -> Result<DqlResult, DomainError> {
+    // 1. Serahkan delegasi penyusunan execution tree ke PhysicalPlanner
+    let mut plan = PhysicalPlanner::build_plan(db, table_name, &stmt)?;
 
-    // ------------------------------------------------------------------
-    // LANGKAH 1: Inisialisasi Root Operator (SeqScan via MemoryRowIterator)
-    // ------------------------------------------------------------------
-    let rows_arc = Arc::new(table.rows().to_vec());
-    let memory_iter = Box::new(MemoryRowIterator::new(rows_arc));
-
-    let mut plan: Box<dyn PhysicalOperator> =
-        Box::new(SeqScanOperator::new(memory_iter, schema.clone()));
-
-    // ------------------------------------------------------------------
-    // LANGKAH 2: Tumpuk FilterOperator (WHERE) jika ada predikat
-    // ------------------------------------------------------------------
-    if let Some(predicate) = stmt.selection {
-        plan = Box::new(FilterOperator::new(plan, predicate));
-    }
-
-    // ------------------------------------------------------------------
-    // LANGKAH 3: Tumpuk AggregateOperator (GROUP BY & Aggregates)
-    // ------------------------------------------------------------------
-    if !stmt.group_by.is_empty() || !stmt.aggregates.is_empty() {
-        let agg_schema = build_aggregate_schema(plan.schema(), &stmt.group_by, &stmt.aggregates)?;
-        plan = Box::new(AggregateOperator::new(
-            plan,
-            stmt.group_by,
-            stmt.aggregates,
-            agg_schema,
-        ));
-    }
-
-    // ------------------------------------------------------------------
-    // LANGKAH 4: Tumpuk SortOperator (ORDER BY) jika ada aturan urutan
-    // ------------------------------------------------------------------
-    if !stmt.order_by.is_empty() {
-        plan = Box::new(SortOperator::new(plan, stmt.order_by));
-    }
-
-    // ------------------------------------------------------------------
-    // LANGKAH 5: Tumpuk ProjectionOperator (SELECT Expressions)
-    // ------------------------------------------------------------------
-    if !stmt.projection.is_empty() {
-        let proj_schema = build_projection_schema(plan.schema(), &stmt.projection)?;
-        plan = Box::new(ProjectionOperator::new(plan, stmt.projection, proj_schema));
-    }
-
-    // ------------------------------------------------------------------
-    // LANGKAH 6: Tumpuk LimitOperator (OFFSET & LIMIT)
-    // ------------------------------------------------------------------
-    if stmt.limit.is_some() || stmt.offset > 0 {
-        plan = Box::new(LimitOperator::new(plan, stmt.limit, stmt.offset));
-    }
-
-    // ------------------------------------------------------------------
-    // LANGKAH 7: Eksekusi Pipeline secara Lazy (Pull Data)
-    // ------------------------------------------------------------------
+    // 2. Eksekusi Pipeline secara Lazy (Pull Data)
     let final_schema = plan.schema().clone();
     let mut result_rows = Vec::new();
 
@@ -101,91 +63,62 @@ pub fn execute_select(
         result_rows.push(row);
     }
 
-    Ok(QueryResult {
+    Ok(DqlResult {
         schema: final_schema,
         rows: result_rows,
     })
 }
 
-// ----------------------------------------------------------------------
-// HELPER FUNCTIONS FOR SCHEMA BUILDING
-// ----------------------------------------------------------------------
-
-/// Helper internal pembangun skema output untuk Aggregate Operator.
-pub(crate) fn build_aggregate_schema(
-    child_schema: &Schema,
-    group_by: &[ColumnId],
-    aggregates: &[AggregateFunc],
-) -> Result<Schema, DomainError> {
-    let mut cols = Vec::new();
-
-    for &col_id in group_by {
-        let col_def = child_schema.get_column_by_id(col_id).ok_or_else(|| {
-            DomainError::EvaluationError(format!(
-                "Kolom GROUP BY dengan ID {:?} tidak ditemukan",
-                col_id
-            ))
-        })?;
-        cols.push(col_def.clone());
+/// Mengeksekusi perintah kueri katalog `SHOW`.
+pub fn execute_show(database: &Database, show: Show) -> Result<DqlResult, DomainError> {
+    match show {
+        Show::Tables => show_tables(database),
+        Show::TablesLike(pattern) => show_tables_like(database, pattern),
     }
-
-    for (i, agg) in aggregates.iter().enumerate() {
-        let name = match agg {
-            AggregateFunc::Count(_) => format!("count_{i}"),
-            AggregateFunc::Sum(_) => format!("sum_{i}"),
-            AggregateFunc::Avg(_) => format!("avg_{i}"),
-            AggregateFunc::Min(_) => format!("min_{i}"),
-            AggregateFunc::Max(_) => format!("max_{i}"),
-        };
-
-        cols.push(ColumnDef::new(
-            ColumnId(9900 + i as u32),
-            name,
-            SqlType::Float,
-        ));
-    }
-
-    Schema::new(cols)
 }
 
-/// Helper internal pembangun skema output untuk Projection Operator.
-pub(crate) fn build_projection_schema(
-    child_schema: &Schema,
-    projection: &[Expr],
-) -> Result<Schema, DomainError> {
-    let mut cols = Vec::with_capacity(projection.len());
+// =========================================================================
+// CATALOG & SYSTEM METADATA QUERIES
+// =========================================================================
 
-    for (i, expr) in projection.iter().enumerate() {
-        let col_type = match expr {
-            Expr::Column(col_id) => {
-                let def = child_schema.get_column_by_id(*col_id).ok_or_else(|| {
-                    DomainError::EvaluationError(format!(
-                        "Kolom ID {:?} tidak ditemukan dalam proyeksi",
-                        col_id
-                    ))
-                })?;
-                def.sql_type.clone()
-            }
-            Expr::Literal(val) => match val {
-                SqlValue::Int(_) => SqlType::Int,
-                SqlValue::Float(_) => SqlType::Float,
-                SqlValue::Text(_) => SqlType::Text,
-                SqlValue::Bool(_) => SqlType::Bool,
-                SqlValue::Bytes(_) => SqlType::Bytes,
-                SqlValue::Timestamp(_) => SqlType::Timestamp,
-                SqlValue::Date(_) => SqlType::Date,
-                SqlValue::Time(_) => SqlType::Time,
-                SqlValue::Null => SqlType::Int,
-            },
-            _ => SqlType::Text,
-        };
+fn show_tables(database: &Database) -> Result<DqlResult, DomainError> {
+    let col_def = ColumnDef::new(ColumnId(1), "table_name", SqlType::Text);
+    let schema = Schema::new(vec![col_def])?;
 
-        cols.push(ColumnDef::new(
-            ColumnId(8800 + i as u32),
-            format!("col_{i}"),
-            col_type,
-        ));
+    let table_names = database.list_tables();
+    let mut rows = Vec::with_capacity(table_names.len());
+    for (idx, name) in table_names.into_iter().enumerate() {
+        let row_id = RowId((idx + 1) as u64);
+        let values = vec![SqlValue::Text(name)];
+        rows.push(Row::with_id(row_id, values));
     }
 
-    Schema::new(cols)
+    Ok(DqlResult { schema, rows })
+}
+
+fn show_tables_like(database: &Database, pattern: &str) -> Result<DqlResult, DomainError> {
+    let col_def = ColumnDef::new(ColumnId(1), "table_name", SqlType::Text);
+    let schema = Schema::new(vec![col_def])?;
+
+    let pattern_val = SqlValue::Text(pattern.to_string());
+    let mut matching_tables = Vec::new();
+
+    for name in database.list_tables() {
+        let name_val = SqlValue::Text(name.clone());
+
+        if name_val.like(&pattern_val)?.is_true() {
+            matching_tables.push(name);
+        }
+    }
+
+    let rows = matching_tables
+        .into_iter()
+        .enumerate()
+        .map(|(idx, name)| {
+            let row_id = RowId((idx + 1) as u64);
+            Row::with_id(row_id, vec![SqlValue::Text(name)])
+        })
+        .collect();
+
+    Ok(DqlResult { schema, rows })
 }

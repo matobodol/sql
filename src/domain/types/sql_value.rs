@@ -8,6 +8,8 @@ use crate::{DomainError, SqlBool, SqlType};
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SqlValue {
+    /// representasi tidak ada nilai
+    Null,
     /// bilangan bulat i64
     Int(i64),
     /// bilangan pecahan f64
@@ -25,8 +27,19 @@ pub enum SqlValue {
     Date(NaiveDate),
     Time(NaiveTime),
 
-    /// representasi tidak ada nilai
-    Null,
+    // UDT User-Defined Tipe atau Domain Type.
+    /// Representasi runtime nilai Enum: (Nama Type Enum, Value Variant)
+    /// Contoh: SqlValue::Enum { type_name: "status".into(), value: "ACTIVE".into() }
+    Enum {
+        type_name: String,
+        value: String,
+    },
+
+    /// Representasi runtime tipe kustom/domain khusus: (Nama Type Custom, Value Raw)
+    Custom {
+        type_name: String,
+        value: String,
+    },
 }
 
 impl SqlValue {
@@ -100,8 +113,20 @@ impl SqlValue {
             (SqlValue::Date(_), SqlType::Date) => true,
             (SqlValue::Time(_), SqlType::Time) => true,
             (SqlValue::Bytes(_), SqlType::Bytes) => true,
-            (SqlValue::Text(val), SqlType::Enum { variants, .. }) => variants.contains(val),
-            (SqlValue::Text(_), SqlType::Custom(_)) => true,
+
+            // Validasi Enum: defined/name cocok DAN value ada di daftar variants
+            (SqlValue::Enum { type_name, value }, SqlType::Enum { name, variants }) => {
+                type_name == name && variants.contains(value)
+            }
+
+            // Validasi Custom: type_name harus cocok
+            (SqlValue::Custom { type_name, .. }, SqlType::Custom(expected_type)) => {
+                type_name == expected_type
+            }
+
+            // Casting darurat/kompatibilitas jika dari Text
+            // (SqlValue::Text(val), SqlType::Enum { variants, .. }) => variants.contains(val),
+            // (SqlValue::Text(_), SqlType::Custom(_)) => true,
             _ => false,
         }
     }
@@ -347,6 +372,7 @@ where
 /// Helper function internal untuk menghasilkan nama varian saat error
 fn get_variant_name(val: &SqlValue) -> &'static str {
     match val {
+        SqlValue::Null => "Null",
         SqlValue::Int(_) => "Int",
         SqlValue::Float(_) => "Float",
         SqlValue::Text(_) => "Text",
@@ -355,7 +381,14 @@ fn get_variant_name(val: &SqlValue) -> &'static str {
         SqlValue::Date(_) => "Date",
         SqlValue::Time(_) => "Time",
         SqlValue::Bytes(_) => "Bytes",
-        SqlValue::Null => "Null",
+        SqlValue::Enum {
+            type_name: _,
+            value: _,
+        } => "Enum",
+        SqlValue::Custom {
+            type_name: _,
+            value: _,
+        } => "Custom",
     }
 }
 
@@ -465,15 +498,25 @@ impl SqlValue {
             (SqlValue::Text(s), SqlType::Time) => Self::parse_time(s),
 
             // Enum Validation Cast
-            (SqlValue::Text(s), SqlType::Enum { variants, .. }) => {
+            // Text -> Enum Cast:
+            (SqlValue::Text(s), SqlType::Enum { name, variants }) => {
                 if variants.contains(s) {
-                    Ok(SqlValue::Text(s.clone()))
+                    Ok(SqlValue::Enum {
+                        type_name: name.clone(),
+                        value: s.clone(),
+                    })
                 } else {
                     Err(DomainError::EvaluationError(format!(
-                        "Nilai '{s}' tidak valid untuk varian Enum yang diizinkan"
+                        "Nilai '{s}' tidak valid untuk varian Enum '{name}'"
                     )))
                 }
             }
+
+            // Text -> Custom Cast:
+            (SqlValue::Text(s), SqlType::Custom(type_name)) => Ok(SqlValue::Custom {
+                type_name: type_name.clone(),
+                value: s.clone(),
+            }),
 
             _ => Err(DomainError::EvaluationError(format!(
                 "Konversi tipe data dari '{:?}' ke '{:?}' tidak didukung",

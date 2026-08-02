@@ -47,6 +47,11 @@ impl Not for SqlBool {
 }
 
 impl SqlBool {
+    /// Mengembalikan true HANYA jika nilainya murni `SqlBool::True`
+    pub fn is_true(&self) -> bool {
+        matches!(self, SqlBool::True)
+    }
+
     /// Helper logika AND ala Three-Valued Logic SQL
     pub fn and(self, other: Self) -> Self {
         match (self, other) {

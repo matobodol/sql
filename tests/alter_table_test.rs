@@ -1,14 +1,19 @@
 use sql::catalog::database::Database;
 use sql::db_function::ddl_action::AlterTableAction;
 use sql::domain::sql_type::SqlType;
-use sql::{ColumnConstraint, SqlValue};
+use sql::{ColumnConstraint, DdlAction, SqlValue};
 
 /// Helper untuk membuat instance Database dengan 1 tabel awal 'users' dan 1 baris data
 fn setup_test_db() -> Database {
     let mut db = Database::default();
 
     // Supaya ada data eksisting untuk menguji backfill/pembacaan row
-    db.create_table("users", vec![]).unwrap();
+    // db.create_table("users", vec![]).unwrap();
+    db.execute_ddl(DdlAction::CreateTable {
+        name: "users".into(),
+        columns: vec![],
+    })
+    .unwrap();
 
     db
 }
@@ -116,7 +121,11 @@ fn test_multi_add_column_failure_rollback() {
 #[test]
 fn test_add_constraint_not_null_failure_and_rollback() {
     let mut db = Database::default();
-    db.create_table("products", vec![]).unwrap();
+    db.execute_ddl(DdlAction::CreateTable {
+        name: "products".into(),
+        columns: vec![],
+    })
+    .unwrap();
 
     // 1. Tambah kolom 'price' (opsional/nullable)
     db.execute_alter(
@@ -148,7 +157,12 @@ fn test_add_constraint_not_null_failure_and_rollback() {
 #[test]
 fn test_set_and_drop_default_value() {
     let mut db = Database::default();
-    db.create_table("settings", vec![]).unwrap();
+    // db.create_table("settings", vec![]).unwrap();
+    db.execute_ddl(DdlAction::CreateTable {
+        name: "settings".into(),
+        columns: vec![],
+    })
+    .unwrap();
 
     // 1. Tambahkan kolom 'theme' tanpa default
     db.execute_alter(

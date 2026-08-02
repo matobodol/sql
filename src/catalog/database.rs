@@ -4,8 +4,8 @@ use crate::catalog::table::Table;
 use crate::domain::id::TableId;
 use crate::domain::{DomainError, Schema};
 use crate::{
-    ColumnConstraint, ColumnDef, ColumnId, DmlAction, DmlResult, QueryResult, SelectStmt, SqlType,
-    SqlValue, execute_alter, execute_select,
+    ColumnId, DdlAction, DmlAction, DmlResult, DqlResult, SelectStmt, Show, execute_alter,
+    execute_ddl, execute_select, execute_show,
 };
 use std::collections::HashMap;
 
@@ -110,55 +110,16 @@ impl Database {
 
     // --- DDL API ---
 
-    /// Pintu masuk CREATE TABLE
-    pub fn create_table(
-        &mut self,
-        table_name: &str,
-        raw_columns: Vec<(String, SqlType, Vec<ColumnConstraint>)>,
-    ) -> Result<TableId, DomainError> {
-        // 1. Register tabel ke registry
-        let table_id = self.registry.register_table(table_name)?;
-
-        // Helper closure untuk rollback registry jika terjadi error di tengah jalan
-        let build_schema = || {
-            let mut column_defs = Vec::with_capacity(raw_columns.len());
-            for (col_name, sql_type, constraints) in raw_columns {
-                let col_id = self.registry.register_column(table_id, &col_name);
-                column_defs.push(ColumnDef::with_constraints(
-                    col_id,
-                    col_name,
-                    sql_type,
-                    constraints,
-                ));
-            }
-
-            Schema::new(column_defs)
-        };
-
-        // 2. Buat skema. Jika GAGAL, bersihkan registry agar tidak ada ID menggantung!
-        let schema = match build_schema() {
-            Ok(s) => s,
-            Err(err) => {
-                let _ = self.registry.unregister_table(table_name);
-                return Err(err);
-            }
-        };
-
-        // 3. Simpan tabel ke HashMap
-        let table = Table::new(table_id, table_name, schema);
-        self.tables.insert(table_id, table);
-
-        Ok(table_id)
-    }
-
-    /// Pintu masuk DROP TABLE
-    pub fn drop_table(&mut self, table_name: &str) -> Result<(), DomainError> {
-        let table_id = self.registry.unregister_table(table_name)?;
-        self.tables.remove(&table_id);
-        Ok(())
+    /// pintu masuk DDL
+    /// Operasi: CREAT TABLE, DROP TABLE, EXECUTE ALTER TABLE.
+    pub fn execute_ddl(&mut self, action: DdlAction) -> Result<(), DomainError> {
+        execute_ddl(self, action)
     }
 
     /// Pintu masuk ALTER TABLE
+    /// Operasi: AddColumn, DropColumn, RenameColumn,
+    /// RenameTable, ModifyColumnType, ModifyConstraint,
+    /// AddConstraint, DripConstraint, SetDefault (value).
     pub fn execute_alter(
         &mut self,
         table_name: &str,
@@ -170,6 +131,7 @@ impl Database {
     // --- DML API (INSERT, UPDATE, DELETE) ---
 
     /// Pintu masuk utama DML
+    /// operasi row: insert, update, delete
     pub fn execute_dml(
         &mut self,
         table_name: &str,
@@ -179,26 +141,6 @@ impl Database {
         table.execute_dml(action)
     }
 
-    /// Convenience wrapper untuk INSERT single row
-    pub fn insert_row(
-        &mut self,
-        table_name: &str,
-        row_values: Vec<SqlValue>,
-    ) -> Result<usize, DomainError> {
-        let table = self.get_table_mut(table_name)?;
-        table.insert(row_values)
-    }
-
-    /// Convenience wrapper untuk BULK INSERT
-    pub fn insert_batch(
-        &mut self,
-        table_name: &str,
-        rows: Vec<Vec<SqlValue>>,
-    ) -> Result<usize, DomainError> {
-        let table = self.get_table_mut(table_name)?;
-        table.insert_batch(rows)
-    }
-
     // --- DQL API (SELECT) ---
 
     /// Pintu masuk SELECT Query
@@ -206,7 +148,11 @@ impl Database {
         &self,
         table_name: &str,
         stmt: SelectStmt,
-    ) -> Result<QueryResult, DomainError> {
+    ) -> Result<DqlResult, DomainError> {
         execute_select(self, table_name, stmt)
+    }
+
+    pub fn execute_show(&self, show: Show) -> Result<DqlResult, DomainError> {
+        execute_show(self, show)
     }
 }
