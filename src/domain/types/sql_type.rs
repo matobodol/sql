@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::ops::Not;
 
-use crate::SqlValue;
-
 /// Representasi Skema Tipe Data SQL
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -66,16 +64,6 @@ impl SqlBool {
             _ => SqlBool::Unknown,
         }
     }
-
-    /// Conversion ke bool biasa untuk clause WHERE (Hanya TRUE yang lolos filter)
-    pub fn is_true(self) -> bool {
-        matches!(self, SqlBool::True)
-    }
-
-    /// Konversi 3VL ke SqlValue runtime (True -> Bool(true), Unknown -> Null)
-    pub fn into_sql_value(self) -> SqlValue {
-        self.into()
-    }
 }
 
 // =============================================================================
@@ -89,21 +77,35 @@ impl From<bool> for SqlBool {
     }
 }
 
-/// Mengubah `SqlValue` (true/false/null) menjadi `SqlBool` (True/False/Unknown)
-impl From<&SqlValue> for SqlBool {
-    fn from(val: &SqlValue) -> Self {
-        match val {
-            SqlValue::Bool(b) => (*b).into(),
-            SqlValue::Null => SqlBool::Unknown,
-            // Semua tipe non-boolean dianggap Unknown di konteks logika 3VL
-            _ => SqlBool::Unknown,
+use std::convert::TryFrom;
+
+use crate::{DomainError, SqlValue};
+
+// Implementasi untuk Referensi (&SqlValue)
+impl TryFrom<&SqlValue> for SqlBool {
+    type Error = DomainError;
+
+    /// Conversion strict dari SqlValue ke SqlBool untuk operasi logika (AND/OR/NOT).
+    /// Mengembalikan TypeError jika tipe data bukan Bool atau Null.
+    fn try_from(value: &SqlValue) -> Result<Self, Self::Error> {
+        match value {
+            SqlValue::Bool(b) => Ok(SqlBool::from(*b)),
+            SqlValue::Null => Ok(SqlBool::Unknown),
+            other => Err(DomainError::EvaluationError(format!(
+                "Operasi logika membutuhkan tipe BOOLEAN, tetapi mendapatkan {:?}",
+                other
+            ))),
         }
     }
 }
 
-// Support konversi dari owned SqlValue juga
-impl From<SqlValue> for SqlBool {
-    fn from(val: SqlValue) -> Self {
-        SqlBool::from(&val)
+// Implementasi untuk Owned (SqlValue)
+impl TryFrom<SqlValue> for SqlBool {
+    type Error = DomainError;
+
+    /// Conversion strict dari SqlValue ke SqlBool untuk operasi logika (AND/OR/NOT).
+    /// Mengembalikan TypeError jika tipe data bukan Bool atau Null.
+    fn try_from(value: SqlValue) -> Result<Self, Self::Error> {
+        SqlBool::try_from(&value)
     }
 }

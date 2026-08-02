@@ -19,7 +19,82 @@ fn variant_index(val: &SqlValue) -> usize {
     }
 }
 
-// IMPLEMENTASI ORD MANUAL
+impl SqlValue {
+    /// Apakah Value adalah null
+    pub fn is_null(&self) -> bool {
+        matches!(self, SqlValue::Null)
+    }
+
+    /// EQUAL (=)
+    pub fn eq(&self, other: &Self) -> SqlBool {
+        if self.is_null() || other.is_null() {
+            SqlBool::Unknown
+        } else {
+            SqlBool::from(self.cmp(other) == Ordering::Equal)
+        }
+    }
+
+    /// NOT EQUAL (!= atau <>)
+    pub fn noteq(&self, other: &Self) -> SqlBool {
+        self.eq(other).not()
+    }
+
+    /// GREATER THAN (>)
+    pub fn gt(&self, other: &Self) -> SqlBool {
+        if self.is_null() || other.is_null() {
+            SqlBool::Unknown
+        } else {
+            SqlBool::from(self.cmp(other) == Ordering::Greater)
+        }
+    }
+
+    /// LESS THAN (<)
+    pub fn lt(&self, other: &Self) -> SqlBool {
+        if self.is_null() || other.is_null() {
+            SqlBool::Unknown
+        } else {
+            SqlBool::from(self.cmp(other) == Ordering::Less)
+        }
+    }
+
+    /// GREATER THAN OR EQUAL (>=)
+    pub fn gteq(&self, other: &Self) -> SqlBool {
+        if self.is_null() || other.is_null() {
+            SqlBool::Unknown
+        } else {
+            let cmp = matches!(self.cmp(other), Ordering::Greater | Ordering::Equal);
+            SqlBool::from(cmp)
+        }
+    }
+
+    /// LESS THAN OR EQUAL (<=)
+    pub fn lteq(&self, other: &Self) -> SqlBool {
+        if self.is_null() || other.is_null() {
+            SqlBool::Unknown
+        } else {
+            let cmp = matches!(self.cmp(other), Ordering::Less | Ordering::Equal);
+            SqlBool::from(cmp)
+        }
+    }
+
+    /// OPERATOR LOGIKA AND
+    pub fn and(&self, other: &Self) -> Result<SqlBool, DomainError> {
+        let r = SqlBool::try_from(self)?;
+        let l = SqlBool::try_from(other)?;
+        Ok(l.and(r))
+    }
+
+    /// OPERATOR LOGIKA OR
+    pub fn or(&self, other: &Self) -> Result<SqlBool, DomainError> {
+        let l = SqlBool::try_from(self)?;
+        let r = SqlBool::try_from(other)?;
+        Ok(l.or(r))
+    }
+}
+
+//
+// -- IMPLEMENTASI ORD MANUAL --
+//
 impl Ord for SqlValue {
     fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
@@ -54,89 +129,5 @@ impl Ord for SqlValue {
 impl PartialOrd for SqlValue {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
-    }
-}
-
-impl SqlValue {
-    /// Apakah Value adalah null
-    pub fn is_null(&self) -> bool {
-        matches!(self, SqlValue::Null)
-    }
-
-    /// Conversion strict dari SqlValue ke SqlBool untuk operasi logika (AND/OR/NOT).
-    /// Mengembalikan TypeError jika tipe data bukan Bool atau Null.
-    pub fn to_sql_bool(&self) -> Result<SqlBool, DomainError> {
-        match self {
-            SqlValue::Bool(b) => Ok((*b).into()),
-            SqlValue::Null => Ok(SqlBool::Unknown),
-            other => Err(DomainError::EvaluationError(format!(
-                "Operasi logika membutuhkan tipe BOOLEAN, tetapi mendapatkan {:?}",
-                other
-            ))),
-        }
-    }
-
-    /// EQUAL (=)
-    pub fn eq(&self, other: &Self) -> SqlBool {
-        if self.is_null() || other.is_null() {
-            SqlBool::Unknown
-        } else {
-            (self.cmp(other) == Ordering::Equal).into()
-        }
-    }
-
-    /// NOT EQUAL (!= atau <>)
-    pub fn noteq(&self, other: &Self) -> SqlBool {
-        self.eq(other).not()
-    }
-
-    /// GREATER THAN (>)
-    pub fn gt(&self, other: &Self) -> SqlBool {
-        if self.is_null() || other.is_null() {
-            SqlBool::Unknown
-        } else {
-            (self.cmp(other) == Ordering::Greater).into()
-        }
-    }
-
-    /// LESS THAN (<)
-    pub fn lt(&self, other: &Self) -> SqlBool {
-        if self.is_null() || other.is_null() {
-            SqlBool::Unknown
-        } else {
-            (self.cmp(other) == Ordering::Less).into()
-        }
-    }
-
-    /// GREATER THAN OR EQUAL (>=)
-    pub fn gteq(&self, other: &Self) -> SqlBool {
-        if self.is_null() || other.is_null() {
-            SqlBool::Unknown
-        } else {
-            matches!(self.cmp(other), Ordering::Greater | Ordering::Equal).into()
-        }
-    }
-
-    /// LESS THAN OR EQUAL (<=)
-    pub fn lteq(&self, other: &Self) -> SqlBool {
-        if self.is_null() || other.is_null() {
-            SqlBool::Unknown
-        } else {
-            matches!(self.cmp(other), Ordering::Less | Ordering::Equal).into()
-        }
-    }
-
-    /// OPERATOR LOGIKA AND
-    pub fn and(&self, other: &Self) -> Result<SqlBool, DomainError> {
-        let l = self.to_sql_bool()?;
-        let r = other.to_sql_bool()?;
-        Ok(l.and(r))
-    }
-
-    /// OPERATOR LOGIKA OR
-    pub fn or(&self, other: &Self) -> Result<SqlBool, DomainError> {
-        let l = self.to_sql_bool()?;
-        let r = other.to_sql_bool()?;
-        Ok(l.or(r))
     }
 }

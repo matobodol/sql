@@ -460,6 +460,21 @@ impl SqlValue {
                 ))),
             },
 
+            // Text -> Timestamp/Date/Time
+            (SqlValue::Text(s), SqlType::Date) => Self::parse_date(s),
+            (SqlValue::Text(s), SqlType::Time) => Self::parse_time(s),
+
+            // Enum Validation Cast
+            (SqlValue::Text(s), SqlType::Enum { variants, .. }) => {
+                if variants.contains(s) {
+                    Ok(SqlValue::Text(s.clone()))
+                } else {
+                    Err(DomainError::EvaluationError(format!(
+                        "Nilai '{s}' tidak valid untuk varian Enum yang diizinkan"
+                    )))
+                }
+            }
+
             _ => Err(DomainError::EvaluationError(format!(
                 "Konversi tipe data dari '{:?}' ke '{:?}' tidak didukung",
                 self, target_type
