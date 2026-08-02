@@ -1,8 +1,10 @@
+use serde::{Deserialize, Serialize};
+
 use crate::domain::DomainError;
 use crate::domain::id::{ColumnId, IdGenerator, TableId};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SymbolRegistry {
     column_id_gen: IdGenerator,
     table_id_gen: IdGenerator,
@@ -36,10 +38,29 @@ impl SymbolRegistry {
             return id;
         }
 
-        let new_id = ColumnId(self.column_id_gen.next_id());
+        let new_id = self.column_id_gen.next_column_id();
         self.col_name_to_id.insert(key, new_id);
         self.col_id_to_name.insert(new_id, name.to_string());
         new_id
+    }
+
+    /// Menghapus pendaftaran satu Kolom spesifik milik sebuah Table dari Registry
+    pub fn unregister_column(
+        &mut self,
+        table_id: TableId,
+        col_name: &str,
+    ) -> Result<ColumnId, DomainError> {
+        let key = (table_id, col_name.to_lowercase());
+
+        // 1. Hapus dari col_name_to_id
+        let col_id = self.col_name_to_id.remove(&key).ok_or_else(|| {
+            DomainError::ColumnNotFound(format!("Kolom '{}' tidak ditemukan di Registry", col_name))
+        })?;
+
+        // 2. Hapus dari col_id_to_name
+        self.col_id_to_name.remove(&col_id);
+
+        Ok(col_id)
     }
 
     pub fn get_column_id(&self, table_id: TableId, name: &str) -> Option<ColumnId> {
@@ -85,10 +106,42 @@ impl SymbolRegistry {
             return Err(DomainError::TableAlreadyExists(name.to_string()));
         }
 
-        let new_id = TableId(self.table_id_gen.next_id());
+        let new_id = self.table_id_gen.next_table_id();
         self.table_name_to_id.insert(name_lower, new_id);
         self.table_id_to_name.insert(new_id, name.to_string());
         Ok(new_id)
+    }
+
+    /// Menghapus pendaftaran Tabel dan SELURUH Kolom yang terikat padanya dari Registry
+    pub fn unregister_table(&mut self, name: &str) -> Result<TableId, DomainError> {
+        let name_lower = name.to_lowercase();
+
+        // 1. Ambil & Hapus TableId berdasarkan nama
+        let table_id = self.table_name_to_id.remove(&name_lower).ok_or_else(|| {
+            DomainError::TableNotFound(format!("Table '{}' tidak ditemukan di Registry", name))
+        })?;
+
+        // 2. Hapus kebalikan mapping table_id_to_name
+        self.table_id_to_name.remove(&table_id);
+
+        // 3. Bersihkan seluruh kolom yang terkait dengan TableId ini
+        // Retain hanya pasangan (TableId, String) yang TableId-nya BUKAN table_id yang dihapus
+        let removed_col_ids: Vec<ColumnId> = self
+            .col_name_to_id
+            .iter()
+            .filter(|((t_id, _), _)| *t_id == table_id)
+            .map(|(_, &col_id)| col_id)
+            .collect();
+
+        // Hapus mapping col_name_to_id untuk tabel ini
+        self.col_name_to_id.retain(|(t_id, _), _| *t_id != table_id);
+
+        // Hapus mapping col_id_to_name untuk setiap ColumnId milik tabel ini
+        for col_id in removed_col_ids {
+            self.col_id_to_name.remove(&col_id);
+        }
+
+        Ok(table_id)
     }
 
     pub fn get_table_id(&self, name: &str) -> Option<TableId> {

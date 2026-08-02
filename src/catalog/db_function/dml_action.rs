@@ -72,7 +72,6 @@ fn handle_insert(table: &mut Table, raw_rows: Vec<Vec<SqlValue>>) -> Result<usiz
 
     let mut staged_rows = Vec::with_capacity(total_rows);
     let mut staged_counters = table.auto_increment_counters().clone();
-    let mut next_row_id = table.next_row_id();
 
     for mut row_values in raw_rows {
         if row_values.len() < columns.len() {
@@ -115,8 +114,8 @@ fn handle_insert(table: &mut Table, raw_rows: Vec<Vec<SqlValue>>) -> Result<usiz
 
         table.schema().validate_row(&row_values)?;
 
-        let staged_row_id = RowId::from(next_row_id);
-        next_row_id += 1;
+        // Panggil next_row_id() yang langsung mengalokasikan & mengembalikan RowId
+        let staged_row_id = table.next_row_id();
 
         let index_entries: Vec<(ColumnId, SqlValue)> = columns
             .iter()
@@ -153,7 +152,6 @@ fn handle_insert(table: &mut Table, raw_rows: Vec<Vec<SqlValue>>) -> Result<usiz
     for staged in staged_rows {
         let row = Row::with_id(staged.row_id, staged.prepared_values);
         table.rows_mut().push(row);
-        table.increment_next_row_id();
     }
 
     Ok(total_rows)

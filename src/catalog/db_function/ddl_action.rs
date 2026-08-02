@@ -2,34 +2,67 @@ use crate::catalog::database::Database;
 use crate::domain::{ColumnConstraint, ColumnDef, DomainError, Schema, SqlType, SqlValue};
 use std::collections::HashSet;
 
+/// Enum tingkat tinggi untuk memisahkan jenis-jenis DDL (ANSI SQL)
+#[derive(Debug, Clone, PartialEq)]
+pub enum DdlAction {
+    /// Membuat tabel baru
+    CreateTable {
+        name: String,
+        columns: Vec<(String, SqlType, Vec<ColumnConstraint>)>,
+    },
+    /// Menghapus tabel
+    DropTable { name: String },
+    /// Mengubah struktur tabel eksisting
+    AlterTable {
+        name: String,
+        actions: Vec<AlterTableAction>,
+    },
+}
+
+impl Database {
+    /// Memberikan kemampuan eksekusi DdlAction langsung dari Facade Database
+    pub fn execute_ddl(&mut self, action: DdlAction) -> Result<(), DomainError> {
+        match action {
+            DdlAction::CreateTable { name, columns } => {
+                self.create_table(&name, columns)?;
+                Ok(())
+            }
+            DdlAction::DropTable { name } => self.drop_table(&name),
+            DdlAction::AlterTable { name, actions } => self.execute_alter(&name, actions),
+        }
+    }
+}
+
 /// Representasi Aksi ALTER TABLE berstandar ANSI SQL.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AlterTableAction {
-    /// Menambahkan kolom baru ke tabel.
     AddColumn {
         name: String,
         sql_type: SqlType,
         constraints: Vec<ColumnConstraint>,
     },
-    /// Menghapus kolom dari tabel.
-    DropColumn { name: String },
-    /// Mengubah nama kolom pada tabel.
-    RenameColumn { old_name: String, new_name: String },
-    /// Mengubah nama tabel.
-    RenameTable { new_name: String },
-    /// Mengubah tipe data kolom.
-    ModifyColumnType { name: String, new_type: SqlType },
-    /// Menambahkan batasan (constraint) baru ke kolom.
+    DropColumn {
+        name: String,
+    },
+    RenameColumn {
+        old_name: String,
+        new_name: String,
+    },
+    RenameTable {
+        new_name: String,
+    },
+    ModifyColumnType {
+        name: String,
+        new_type: SqlType,
+    },
     AddConstraint {
         col_name: String,
         constraint: ColumnConstraint,
     },
-    /// Menghapus batasan (constraint) dari kolom.
     DropConstraint {
         col_name: String,
         constraint: ColumnConstraint,
     },
-    /// Mengatur nilai default baru pada kolom.
     SetDefault {
         col_name: String,
         default_val: Option<SqlValue>,
@@ -114,7 +147,7 @@ pub(crate) fn execute_alter(
         }
     }
 
-    // 4. COMMIT: Jika SELURUH aksi berhasil, swap/apply staging ke db utama
+    // 4. COMMIT: Jika SELURUH aksi berhasil, swap staging ke db utama
     *db = db_staging;
 
     Ok(())
@@ -175,8 +208,8 @@ fn execute_drop_column(
             DomainError::EvaluationError(format!("Kolom '{col_name}' tidak ditemukan"))
         })?;
 
+    // 1. Dapatkan index kolom fisik
     let table = db.get_table_mut(table_name)?;
-
     let col_idx = table
         .schema()
         .columns()
@@ -186,6 +219,7 @@ fn execute_drop_column(
             DomainError::EvaluationError(format!("Kolom '{col_name}' tidak ada di tabel"))
         })?;
 
+    // 2. Potong kolom dari Schema dan Rows
     let mut new_columns = table.schema().columns().to_vec();
     new_columns.remove(col_idx);
     let new_schema = Schema::new(new_columns)?;
@@ -194,6 +228,9 @@ fn execute_drop_column(
     for row in table.rows_mut() {
         row.remove(col_idx);
     }
+
+    // 3. Wajib: Bersihkan dari SymbolRegistry agar ID tidak leaking!
+    db.registry_mut().unregister_column(table_id, col_name)?;
 
     Ok(())
 }

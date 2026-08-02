@@ -1,5 +1,5 @@
-use crate::catalog::db_function::dml::{DmlAction, DmlResult, execute_dml};
-use crate::domain::id::{ColumnId, TableId};
+use crate::catalog::db_function::dml_action::{DmlAction, DmlResult, execute_dml};
+use crate::domain::id::{ColumnId, IdGenerator, RowId, TableId};
 use crate::domain::{ColumnConstraint, DomainError, Row, Schema};
 use crate::index::IndexRegistry;
 use crate::{AutoIncrement, SqlValue};
@@ -11,8 +11,8 @@ pub struct Table {
     name: String,
     schema: Schema,
     rows: Vec<Row>,
-    /// Counter sekuensial internal untuk memproduksi RowId
-    next_row_id: u64,
+    /// Generator sekuensial internal untuk memproduksi RowId
+    row_id_gen: IdGenerator,
     /// Registry indeks untuk BTreeIndex pada kolom-kolom ber-indeks
     index_registry: IndexRegistry,
     /// Menggunakan ColumnId sebagai Key agar imun terhadap RENAME COLUMN!
@@ -35,7 +35,7 @@ impl Table {
             name: name.into(),
             schema,
             rows: Vec::new(),
-            next_row_id: 1,
+            row_id_gen: IdGenerator::new(1),
             index_registry: IndexRegistry::new(),
             auto_increment_counters,
         };
@@ -100,12 +100,9 @@ impl Table {
 
     // --- HELPER INTERNAL UNTUK DML ENGINE ---
 
-    pub(crate) fn next_row_id(&self) -> u64 {
-        self.next_row_id
-    }
-
-    pub(crate) fn increment_next_row_id(&mut self) {
-        self.next_row_id += 1;
+    /// Mengalokasikan dan mengembalikan RowId berikutnya secara thread-safe
+    pub(crate) fn next_row_id(&self) -> RowId {
+        self.row_id_gen.next_row_id()
     }
 
     pub(crate) fn auto_increment_counters(&self) -> &HashMap<ColumnId, i64> {

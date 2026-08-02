@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::ops::Index;
+use std::ops::{Deref, DerefMut, Index, IndexMut};
 
 use super::domain_error::DomainError;
 use super::id::RowId;
@@ -100,16 +100,18 @@ impl Row {
 
     /// Mendeserialisasi slice byte mentah menjadi instance `Row`.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, DomainError> {
-        bincode::deserialize(bytes)
+        rmp_serde::from_slice(bytes)
             .map_err(|e| DomainError::EvaluationError(format!("Gagal mendeserialisasi row: {e}")))
     }
 
     /// Menserialisasi instance `Row` menjadi representasi vektor byte (`Vec<u8>`).
     pub fn to_bytes(&self) -> Result<Vec<u8>, DomainError> {
-        bincode::serialize(self)
+        rmp_serde::to_vec(self)
             .map_err(|e| DomainError::EvaluationError(format!("Gagal menserialisasi row: {e}")))
     }
 }
+
+// --- TRAIT IMPLEMENTATIONS ---
 
 /// Konversi dari `Vec<SqlValue>` ke `Row` dengan default `RowId(0)`.
 impl From<Vec<SqlValue>> for Row {
@@ -138,5 +140,28 @@ impl Index<usize> for Row {
 
     fn index(&self, index: usize) -> &Self::Output {
         &self.values[index]
+    }
+}
+
+/// Pengaksesan nilai kolom menggunakan indeks array (misal: `let val = row[0];`).
+impl IndexMut<usize> for Row {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.values[index]
+    }
+}
+
+/// Pemanggil dari luar bisa langsung mengeksekusi row.len(), row.iter(),
+/// atau for val in &mut row
+impl Deref for Row {
+    type Target = [SqlValue];
+
+    fn deref(&self) -> &Self::Target {
+        &self.values
+    }
+}
+
+impl DerefMut for Row {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.values
     }
 }

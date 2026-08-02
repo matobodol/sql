@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use sql::catalog::db_function::dml::{DmlAction, DmlResult};
+use sql::catalog::db_function::dml_action::{DmlAction, DmlResult};
 use sql::catalog::table::Table;
 use sql::domain::expr::{BinaryOp, Expr};
 use sql::domain::id::{ColumnId, TableId};

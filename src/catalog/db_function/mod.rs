@@ -1,7 +1,7 @@
-pub mod alter_table;
-pub mod dml;
-pub mod select;
+pub mod ddl_action;
+pub mod dml_action;
+pub mod dql_action;
 
-pub use alter_table::*;
-pub use dml::*;
-pub use select::*;
+pub use ddl_action::*;
+pub use dml_action::*;
+pub use dql_action::*;
