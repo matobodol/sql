@@ -80,6 +80,14 @@ impl IdGenerator {
     pub fn next_column_id(&self) -> ColumnId {
         ColumnId(self.next_u32())
     }
+
+    pub fn current_u64(&self) -> u64 {
+        self.counter.load(Ordering::SeqCst)
+    }
+
+    pub fn current_row_id(&self) -> RowId {
+        RowId(self.current_u64())
+    }
 }
 
 impl Clone for IdGenerator {

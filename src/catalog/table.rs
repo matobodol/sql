@@ -98,11 +98,20 @@ impl Table {
         &mut self.index_registry
     }
 
-    // --- HELPER INTERNAL UNTUK DML ENGINE ---
+    // --- HELPER ID GENERATOR & RECOVERY ---
 
-    /// Mengalokasikan dan mengembalikan RowId berikutnya secara thread-safe
-    pub(crate) fn next_row_id(&self) -> RowId {
+    /// Mengalokasikan dan mengembalikan RowId berikutnya secara mutable
+    pub fn next_row_id(&mut self) -> RowId {
         self.row_id_gen.next_row_id()
+    }
+
+    pub fn current_row_id(&self) -> RowId {
+        self.row_id_gen.current_row_id()
+    }
+
+    /// Memulihkan/mensesuaikan nilai counter RowId generator (dipanggil saat recovery)
+    pub fn set_row_id_counter(&mut self, next_id: u64) {
+        self.row_id_gen = IdGenerator::new(next_id);
     }
 
     pub(crate) fn auto_increment_counters(&self) -> &HashMap<ColumnId, i64> {
@@ -116,13 +125,13 @@ impl Table {
     // --- API DML EKSTERNAL ---
 
     /// Pintu masuk utama untuk seluruh aksi DML (INSERT, UPDATE, DELETE)
-    pub fn execute_dml(&mut self, action: DmlAction) -> Result<DmlResult, DomainError> {
+    pub fn execute_dml(&mut self, action: &DmlAction) -> Result<DmlResult, DomainError> {
         execute_dml(self, action)
     }
 
     /// Helper instan untuk Single Insert (Convenience Wrapper)
     pub fn insert(&mut self, row_values: Vec<SqlValue>) -> Result<usize, DomainError> {
-        match self.execute_dml(DmlAction::Insert {
+        match self.execute_dml(&DmlAction::Insert {
             rows: vec![row_values],
         })? {
             DmlResult::Inserted(count) => Ok(count),
@@ -132,9 +141,36 @@ impl Table {
 
     /// Helper instan untuk Bulk Insert (Convenience Wrapper)
     pub fn insert_batch(&mut self, rows: Vec<Vec<SqlValue>>) -> Result<usize, DomainError> {
-        match self.execute_dml(DmlAction::Insert { rows })? {
+        match self.execute_dml(&DmlAction::Insert { rows })? {
             DmlResult::Inserted(count) => Ok(count),
             _ => unreachable!(),
         }
+    }
+
+    /// Merekonstruksi ulang entri pada seluruh B-Tree Index.
+    /// Sangat penting dipanggil setelah operasi DDL (ALTER TABLE) yang menggeser/mengubah baris.
+    pub fn rebuild_indexes(&mut self) -> Result<(), DomainError> {
+        // 1. Kosongkan entri BTree lama
+        self.index_registry.clear_entries();
+
+        // 2. Ambil daftar ColumnId sesuai dengan urutan fisik skema saat ini
+        let col_ids: Vec<ColumnId> = self.schema.columns().iter().map(|c| c.id).collect();
+
+        // 3. Masukkan kembali seluruh baris ke IndexRegistry
+        for row in &self.rows {
+            let row_id = row.id();
+
+            // Buat pasangan (ColumnId, SqlValue) untuk baris ini
+            let entries: Vec<(ColumnId, SqlValue)> = col_ids
+                .iter()
+                .zip(row.values())
+                .map(|(&col_id, val)| (col_id, val.clone()))
+                .collect();
+
+            // Insert ulang ke BTree Index
+            self.index_registry.insert_entry(row_id, &entries)?;
+        }
+
+        Ok(())
     }
 }

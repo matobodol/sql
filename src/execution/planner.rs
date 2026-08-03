@@ -1,9 +1,7 @@
-//! Physical Planner yang bertugas mentransformasikan AST Query (`SelectStmt`)
-//! menjadi tree of `PhysicalOperator` yang siap dieksekusi.
-
 use std::sync::Arc;
 
 use crate::catalog::database::Database;
+use crate::catalog::dml_action::try_index_scan; // Import helper dari dml_action
 use crate::catalog::dql_action::SelectStmt;
 use crate::domain::DomainError;
 use crate::execution::operator::PhysicalOperator;
@@ -11,16 +9,13 @@ use crate::execution::{
     AggregateOperator, FilterOperator, LimitOperator, MemoryRowIterator, ProjectionOperator,
     SeqScanOperator, SortOperator,
 };
-use crate::{AggregateFunc, ColumnDef, ColumnId, Expr, Schema, SqlType, SqlValue};
+use crate::{
+    AggregateFunc, ColumnDef, ColumnId, Expr, IndexScanOperator, Schema, SqlType, SqlValue,
+};
 
-/// Physical Planner untuk membangun *pipeline* eksekusi query.
 pub struct PhysicalPlanner;
 
 impl PhysicalPlanner {
-    /// Membangun Physical Operator Tree dari `SelectStmt`.
-    ///
-    /// Menyusun operator secara berjenjang (*layered stack*) mulai dari `SeqScan`
-    /// hingga `Limit` sesuai dengan klausa SQL yang ditentukan dalam `stmt`.
     pub fn build_plan(
         db: &Database,
         table_name: &str,
@@ -30,19 +25,31 @@ impl PhysicalPlanner {
         let schema = table.schema();
 
         // ------------------------------------------------------------------
-        // LANGKAH 1: Inisialisasi Root Operator (SeqScan via MemoryRowIterator)
+        // LANGKAH 1: Inisialisasi Root Scan Operator (IndexScan vs SeqScan)
         // ------------------------------------------------------------------
-        let rows_arc = Arc::new(table.rows().to_vec());
-        let memory_iter = Box::new(MemoryRowIterator::new(rows_arc));
-
-        let mut plan: Box<dyn PhysicalOperator> =
-            Box::new(SeqScanOperator::new(memory_iter, schema.clone()));
+        // ------------------------------------------------------------------
+        // LANGKAH 1 & 2: Root Scan & Filtering
+        // ------------------------------------------------------------------
+        let (mut plan, is_index_scan): (Box<dyn PhysicalOperator>, bool) =
+            if let Some(candidate_ids) = try_index_scan(table, stmt.selection.as_ref()) {
+                (Box::new(IndexScanOperator::new(table, candidate_ids)), true)
+            } else {
+                let rows_arc = Arc::new(table.rows().to_vec());
+                let memory_iter = Box::new(MemoryRowIterator::new(rows_arc));
+                (
+                    Box::new(SeqScanOperator::new(memory_iter, schema.clone())),
+                    false,
+                )
+            };
 
         // ------------------------------------------------------------------
         // LANGKAH 2: Tumpuk FilterOperator (WHERE) jika ada predikat
         // ------------------------------------------------------------------
+        // Hanya tambahkan FilterOperator jika BUtuh (misal Sequential Scan)
         if let Some(ref predicate) = stmt.selection {
-            plan = Box::new(FilterOperator::new(plan, predicate.clone()));
+            if !is_index_scan {
+                plan = Box::new(FilterOperator::new(plan, predicate.clone()));
+            }
         }
 
         // ------------------------------------------------------------------
@@ -60,7 +67,7 @@ impl PhysicalPlanner {
         }
 
         // ------------------------------------------------------------------
-        // LANGKAH 4: Tumpuk SortOperator (ORDER BY) jika ada aturan urutan
+        // LANGKAH 4: Tumpuk SortOperator (ORDER BY)
         // ------------------------------------------------------------------
         if !stmt.order_by.is_empty() {
             plan = Box::new(SortOperator::new(plan, stmt.order_by.clone()));

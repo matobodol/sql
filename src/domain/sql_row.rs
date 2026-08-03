@@ -19,16 +19,6 @@ pub struct Row {
 }
 
 impl Row {
-    /// Membuat instance `Row` baru tanpa ID spesifik (default `RowId(0)`).
-    ///
-    /// *Catatan:* Sebaiknya gunakan `Row::with_id` saat menyisipkan baris ke dalam tabel.
-    pub fn new(values: Vec<SqlValue>) -> Self {
-        Self {
-            id: RowId::from(0u64),
-            values,
-        }
-    }
-
     /// Membuat instance `Row` baru dengan `RowId` eksplisit dan permanen.
     pub fn with_id(id: RowId, values: Vec<SqlValue>) -> Self {
         Self { id, values }
@@ -98,6 +88,17 @@ impl Row {
         self.values.push(value);
     }
 
+    /// Menyisipkan nilai kolom baru pada indeks posisi tertentu (digunakan saat `ADD COLUMN ... FIRST/AFTER`).
+    ///
+    /// Jika `index` lebih besar dari panjang baris, nilai akan ditaruh di paling akhir.
+    pub fn insert(&mut self, index: usize, value: SqlValue) {
+        if index >= self.values.len() {
+            self.values.push(value);
+        } else {
+            self.values.insert(index, value);
+        }
+    }
+
     /// Mendeserialisasi slice byte mentah menjadi instance `Row`.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, DomainError> {
         rmp_serde::from_slice(bytes)
@@ -113,24 +114,10 @@ impl Row {
 
 // --- TRAIT IMPLEMENTATIONS ---
 
-/// Konversi dari `Vec<SqlValue>` ke `Row` dengan default `RowId(0)`.
-impl From<Vec<SqlValue>> for Row {
-    fn from(values: Vec<SqlValue>) -> Self {
-        Self::new(values)
-    }
-}
-
 /// Konversi dari tuple `(RowId, Vec<SqlValue>)` ke `Row`.
 impl From<(RowId, Vec<SqlValue>)> for Row {
     fn from((id, values): (RowId, Vec<SqlValue>)) -> Self {
         Self::with_id(id, values)
-    }
-}
-
-/// Memungkinkan pembuatan `Row` langsung dari Iterator `SqlValue`.
-impl FromIterator<SqlValue> for Row {
-    fn from_iter<T: IntoIterator<Item = SqlValue>>(iter: T) -> Self {
-        Self::new(iter.into_iter().collect())
     }
 }
 

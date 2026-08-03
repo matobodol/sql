@@ -215,7 +215,11 @@ impl AggregateOperator {
             for acc in accumulators {
                 row_values.push(acc.evaluate());
             }
-            final_rows.push(Row::new(row_values));
+            // 💡 Gunakan Row::with_id dengan RowId dummy untuk baris hasil agregasi
+            final_rows.push(Row::with_id(
+                crate::domain::id::RowId::from(0u64),
+                row_values,
+            ));
         }
 
         self.aggregated_rows = Some(final_rows.into_iter());

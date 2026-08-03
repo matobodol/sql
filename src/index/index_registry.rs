@@ -91,4 +91,20 @@ impl IndexRegistry {
         }
         Ok(())
     }
+
+    /// Menghapus SELURUH indeks yang terdaftar beserta data entri di dalamnya.
+    pub fn clear(&mut self) {
+        self.indexes.clear();
+    }
+
+    /// Mengosongkan seluruh data entri di dalam indeks,
+    /// namun tetap mempertahankan skema indeks yang sudah terdaftar.
+    pub fn clear_entries(&mut self) {
+        // Jika hanya ingin mengosongkan entri tanpa menghapus definisi indeks
+        for index in self.indexes.values_mut() {
+            // Karena BTreeIndex di-box sebagai trait object,
+            // kita bisa meng-instansiasi ulang BTreeIndex bersih berdasarkan is_unique-nya
+            *index = Box::new(BTreeIndex::new(index.is_unique()));
+        }
+    }
 }

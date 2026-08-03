@@ -51,7 +51,8 @@ impl PhysicalOperator for ProjectionOperator {
                 projected_values.push(val);
             }
 
-            Ok(Some(Row::new(projected_values)))
+            // 💡 Gunakan Row::with_id (bisa meneruskan row.id() asli dari input)
+            Ok(Some(Row::with_id(row.id(), projected_values)))
         } else {
             Ok(None)
         }

@@ -43,3 +43,56 @@ impl RowIterator for MemoryRowIterator {
         }
     }
 }
+
+// -- disk
+
+use storage::TableHeap;
+use storage::buffer::BufferPoolManager;
+use storage::table::rid::RID;
+
+/// Implementasi [`RowIterator`] berbasis Disk Storage Engine (`TableHeap` & `BufferPoolManager`).
+pub struct DiskRowIterator<'a> {
+    bpm: &'a mut BufferPoolManager,
+    table_heap: &'a TableHeap,
+    rids: Vec<RID>,
+    cursor: usize,
+}
+
+impl<'a> DiskRowIterator<'a> {
+    /// Membuat instance `DiskRowIterator` baru dari `TableHeap`.
+    pub fn new(
+        bpm: &'a mut BufferPoolManager,
+        table_heap: &'a TableHeap,
+    ) -> Result<Self, DomainError> {
+        let rids = table_heap.scan_rids(bpm).map_err(|e| {
+            DomainError::ExecutionError(format!("Gagal scan RID dari storage: {e}"))
+        })?;
+
+        Ok(Self {
+            bpm,
+            table_heap,
+            rids,
+            cursor: 0,
+        })
+    }
+}
+
+impl<'a> RowIterator for DiskRowIterator<'a> {
+    fn next_row(&mut self) -> Result<Option<Row>, DomainError> {
+        while self.cursor < self.rids.len() {
+            let rid = self.rids[self.cursor];
+            self.cursor += 1;
+
+            let tuple_bytes = self.table_heap.get_tuple(self.bpm, rid).map_err(|e| {
+                DomainError::ExecutionError(format!("I/O Error saat membaca tuple: {e}"))
+            })?;
+
+            if let Some(bytes) = tuple_bytes {
+                let row = Row::from_bytes(&bytes)?;
+                return Ok(Some(row));
+            }
+        }
+
+        Ok(None)
+    }
+}

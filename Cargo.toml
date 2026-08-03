@@ -13,3 +13,4 @@ rmp-serde = { workspace = true }
 regex = { workspace = true }
 ordered-float = { workspace = true }
 thiserror = { workspace = true }
+tempfile = { workspace = true }

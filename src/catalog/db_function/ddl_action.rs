@@ -1,7 +1,16 @@
 use crate::catalog::database::Database;
-use crate::domain::{ColumnConstraint, ColumnDef, DomainError, Schema, SqlType, SqlValue};
+use crate::domain::{
+    ColumnConstraint, ColumnDef, ColumnId, DomainError, Schema, SqlType, SqlValue,
+};
 use crate::{Table, TableId};
 use std::collections::HashSet;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ColumnPosition {
+    Default,       // Ditaruh di paling akhir (standard ANSI)
+    First,         // Ditaruh di paling awal (index 0)
+    After(String), // Ditaruh setelah kolom tertentu
+}
 
 /// Enum tingkat tinggi untuk memisahkan jenis-jenis DDL (ANSI SQL)
 #[derive(Debug, Clone, PartialEq)]
@@ -39,6 +48,7 @@ pub enum AlterTableAction {
         name: String,
         sql_type: SqlType,
         constraints: Vec<ColumnConstraint>,
+        position: ColumnPosition,
     },
     DropColumn {
         name: String,
@@ -93,6 +103,7 @@ pub(crate) fn execute_alter(
                 name,
                 sql_type,
                 constraints,
+                position,
             } => {
                 execute_add_column(
                     &mut db_staging,
@@ -100,6 +111,7 @@ pub(crate) fn execute_alter(
                     &name,
                     sql_type,
                     constraints,
+                    position,
                 )?;
             }
             AlterTableAction::DropColumn { name } => {
@@ -202,37 +214,92 @@ fn drop_table(db: &mut Database, table_name: &str) -> Result<(), DomainError> {
     Ok(())
 }
 
-/// Eksekutor internal untuk menambahkan kolom baru.
+/// Eksekutor internal untuk menambahkan kolom baru secara atomik.
+/// Eksekutor internal untuk menambahkan kolom baru dengan opsi posisi (FIRST / AFTER / Default).
 fn execute_add_column(
     db: &mut Database,
     table_name: &str,
     col_name: &str,
     sql_type: SqlType,
     constraints: Vec<ColumnConstraint>,
+    position: ColumnPosition,
 ) -> Result<(), DomainError> {
     let table_id = db
         .registry()
         .get_table_id(table_name)
         .ok_or_else(|| DomainError::TableNotFound(table_name.to_string()))?;
 
-    let col_id = db.registry_mut().register_column(table_id, col_name);
+    // 1. Read-Only Staging Schema & Tentukan Indeks Posisi
+    let (mut staged_columns, target_idx) = {
+        let table = db.get_table(table_name)?;
+        let cols = table.schema().columns();
 
-    let new_col_def = ColumnDef::with_constraints(col_id, col_name, sql_type, constraints);
-    let default_val = new_col_def
+        let idx = match position {
+            ColumnPosition::First => 0,
+            ColumnPosition::After(ref ref_col_name) => {
+                let ref_col_id = db
+                    .registry()
+                    .get_column_id(table_id, ref_col_name)
+                    .ok_or_else(|| {
+                        DomainError::EvaluationError(format!(
+                            "Kolom referensi '{ref_col_name}' tidak ditemukan"
+                        ))
+                    })?;
+
+                let pos = cols
+                    .iter()
+                    .position(|c| c.id == ref_col_id)
+                    .ok_or_else(|| {
+                        DomainError::EvaluationError(format!(
+                            "Kolom '{ref_col_name}' tidak ada di skema"
+                        ))
+                    })?;
+
+                pos + 1 // Sisipkan TEPAT SETELAH kolom referensi
+            }
+            ColumnPosition::Default => cols.len(), // Sisipkan di paling akhir
+        };
+
+        (cols.to_vec(), idx)
+    };
+
+    // 2. Gunakan Temp ID unik berbasis panjang skema
+    let temp_id = ColumnId(u32::MAX - staged_columns.len() as u32);
+    let dummy_col_def =
+        ColumnDef::with_constraints(temp_id, col_name, sql_type.clone(), constraints.clone());
+
+    // Insert dummy di target_idx
+    staged_columns.insert(target_idx, dummy_col_def);
+
+    // 3. Validasi Atomik Skema Baru
+    Schema::validate_schema_columns(&staged_columns)?;
+
+    // 4. COMMIT Phase: Ambil Real ID dari SymbolRegistry
+    let col_id = db.registry_mut().register_column(table_id, col_name);
+    let real_col_def = ColumnDef::with_constraints(col_id, col_name, sql_type, constraints);
+
+    let default_val = real_col_def
         .default_value()
         .cloned()
         .unwrap_or(SqlValue::Null);
 
-    let table = db.get_table_mut(table_name)?;
-    let mut new_columns = table.schema().columns().to_vec();
-    new_columns.push(new_col_def);
+    // Ganti dummy_col_def pada posisi target_idx dengan real_col_def
+    staged_columns[target_idx] = real_col_def;
 
-    let new_schema = Schema::new(new_columns)?;
+    let new_schema = Schema::new(staged_columns)?;
+
+    // 5. Update Schema & Data Baris (Rows)
+    let table = db.get_table_mut(table_name)?;
     *table.schema_mut() = new_schema;
 
+    // Sisipkan nilai default tepat di posisi `target_idx` untuk semua baris
     for row in table.rows_mut() {
-        row.push(default_val.clone());
+        // Gunakan insert() alih-alih push()
+        row.insert(target_idx, default_val.clone());
     }
+
+    // 💡 SINKRONISASI INDEKS: Rebuild indeks setelah kolom dan baris diperbarui
+    table.rebuild_indexes()?;
 
     Ok(())
 }
@@ -279,6 +346,11 @@ fn execute_drop_column(
     // 3. Wajib: Bersihkan dari SymbolRegistry agar ID tidak leaking!
     db.registry_mut().unregister_column(table_id, col_name)?;
 
+    // 💡 SINKRONISASI INDEKS: Hapus indeks kolom yang di-drop & rebuild indeks tersisa
+    let table = db.get_table_mut(table_name)?;
+    table.index_registry_mut().drop_index(col_id);
+    table.rebuild_indexes()?;
+
     Ok(())
 }
 
@@ -299,15 +371,18 @@ fn execute_rename_column(
         .get_column_id(table_id, old_name)
         .ok_or_else(|| DomainError::ColumnNotFound(old_name.to_string()))?;
 
-    db.registry_mut()
-        .rename_column(table_id, old_name, new_name)?;
-
+    // Ubah nama di Schema dulu (akan memicu validasi duplikasi nama baru)
     let table = db.get_table_mut(table_name)?;
     table.schema_mut().rename_column(col_id, new_name)?;
+
+    // Jika Schema berhasil diperbarui, baru perbarui Registry
+    db.registry_mut()
+        .rename_column(table_id, old_name, new_name)?;
 
     Ok(())
 }
 
+/// Eksekutor internal untuk mengubah nama tabel.
 /// Eksekutor internal untuk mengubah nama tabel.
 fn execute_rename_table(
     db: &mut Database,
@@ -319,10 +394,13 @@ fn execute_rename_table(
         .get_table_id(old_name)
         .ok_or_else(|| DomainError::TableNotFound(old_name.to_string()))?;
 
+    // 1. Perbarui SymbolRegistry
     db.registry_mut().rename_table(old_name, new_name)?;
 
-    let table = db.tables_mut().get_mut(&table_id).unwrap();
-    table.set_name(new_name);
+    // 2. Perbarui nama pada object Table (jika HashMap berkey-kan TableId)
+    if let Some(table) = db.tables_mut().get_mut(&table_id) {
+        table.set_name(new_name);
+    }
 
     Ok(())
 }
@@ -334,6 +412,9 @@ fn execute_modify_column_type(
     col_name: &str,
     new_type: SqlType,
 ) -> Result<(), DomainError> {
+    // Validasi tipe baru (termasuk cek duplikasi varian enum)
+    new_type.validate_enum_variants()?;
+
     let table_id = db
         .registry()
         .get_table_id(table_name)
@@ -357,6 +438,7 @@ fn execute_modify_column_type(
             DomainError::EvaluationError(format!("Kolom '{col_name}' tidak ada di tabel"))
         })?;
 
+    // Try Casting seluruh data baris
     let mut new_values = Vec::with_capacity(table.rows().len());
     for row in table.rows() {
         let current_val = &row[col_idx];
@@ -364,12 +446,16 @@ fn execute_modify_column_type(
         new_values.push(casted_val);
     }
 
+    // Terapkan tipe baru pada Schema (Memicu Re-validation Schema)
+    table.schema_mut().modify_column_type(col_id, new_type)?;
+
+    // Terapkan nilai hasil cast ke data baris
     for (row, new_val) in table.rows_mut().iter_mut().zip(new_values) {
         row.values_mut()[col_idx] = new_val;
     }
 
-    table.schema_mut().modify_column_type(col_id, new_type)?;
-
+    // 💡 SINKRONISASI INDEKS: Rebuild indeks agar tipe data baru dalam B-Tree cocok
+    table.rebuild_indexes()?;
     Ok(())
 }
 
@@ -466,9 +552,19 @@ fn execute_add_constraint(
         ColumnConstraint::Check(_) => {}
     }
 
+    // Tambahkan constraint ke schema
     table
         .schema_mut()
-        .add_column_constraint(col_id, constraint)?;
+        .add_column_constraint(col_id, constraint.clone())?;
+
+    // 💡 Jika constraint adalah Unique/PrimaryKey, buat BTreeIndex & rebuild!
+    if matches!(
+        constraint,
+        ColumnConstraint::Unique | ColumnConstraint::PrimaryKey
+    ) {
+        let _ = table.index_registry_mut().create_btree_index(col_id, true);
+        table.rebuild_indexes()?;
+    }
 
     Ok(())
 }

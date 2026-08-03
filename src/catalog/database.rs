@@ -135,7 +135,7 @@ impl Database {
     pub fn execute_dml(
         &mut self,
         table_name: &str,
-        action: DmlAction,
+        action: &DmlAction,
     ) -> Result<DmlResult, DomainError> {
         let table = self.get_table_mut(table_name)?;
         table.execute_dml(action)

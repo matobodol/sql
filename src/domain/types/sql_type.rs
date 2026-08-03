@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::ops::Not;
+use std::{collections::HashSet, ops::Not};
 
 /// Representasi Skema Tipe Data SQL
 #[non_exhaustive]
@@ -22,6 +22,26 @@ pub enum SqlType {
         variants: Vec<String>,
     },
     Custom(String),
+}
+
+impl SqlType {
+    /// Memvalidasi definisi SqlType, memastikan tidak ada varian Enum yang duplikat
+    pub fn validate_enum_variants(&self) -> Result<(), DomainError> {
+        if let SqlType::Enum { name, variants } = self {
+            let mut seen = HashSet::with_capacity(variants.len());
+
+            for variant in variants {
+                // hashset.insert() mengembalikan false jika element sudah ada sebelumnya
+                if !seen.insert(variant) {
+                    return Err(DomainError::EvaluationError(format!(
+                        "Definisi Enum '{name}' tidak valid: varian '{variant}' terdefinisi lebih dari sekali"
+                    )));
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// untuk evaluasi ekspresi atau perbandingan kwhere (And Or Not)

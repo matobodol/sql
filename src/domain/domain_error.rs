@@ -11,6 +11,8 @@ pub enum DomainError {
     #[error("Gagal mengevaluasi: {0}")]
     EvaluationError(String),
 
+    #[error("Gagal mengeksekusi: {0}")]
+    ExecutionError(String),
     /// Error saat ekstraksi/konversi `SqlValue` ke tipe Rust asli gagal.
     #[error(
         "Gagal konversi SqlValue: mengharapkan tipe '{expected}', tetapi menemukan tipe '{found}'"
