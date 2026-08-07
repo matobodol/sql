@@ -1,60 +1,95 @@
 //! Physical operator untuk mengeksekusi Proyeksi SQL (`SELECT expr1, expr2, ...`).
 
-use super::operator::PhysicalOperator;
-use crate::{
-    domain::{DomainError, Row, Schema},
-    eval_expr,
-    expr::Expr,
-};
+use std::sync::Arc;
 
-/// Physical operator yang bertugas melakukan proyeksi daftar ekspresi (`SELECT`)
-/// dan memetakan baris input ke bentuk skema keluaran baru.
+use super::operator::PhysicalOperator;
+use crate::eval_expr;
+use crate::expr::Expr;
+use crate::{DomainError, Row, Schema};
+
 pub struct ProjectionOperator {
-    /// Physical operator anak yang menjadi sumber input stream data.
     input: Box<dyn PhysicalOperator>,
-    /// Daftar ekspresi yang dievaluasi untuk membentuk tiap nilai kolom pada baris baru.
-    exprs: Vec<Expr>,
-    /// Skema keluaran hasil proyeksi.
+    /// Pre-bound expressions untuk evaluasi O(1)
+    bound_exprs: Vec<Expr>,
     output_schema: Schema,
 }
 
 impl ProjectionOperator {
-    /// Membuat instance `ProjectionOperator` baru.
-    ///
-    /// # Arguments
-    /// * `input` - Operator anak yang memasok baris data.
-    /// * `exprs` - Daftar ekspresi SQL yang akan dievaluasi per baris.
-    /// * `output_schema` - Skema baru yang merepresentasikan struktur keluaran hasil proyeksi.
-    pub fn new(input: Box<dyn PhysicalOperator>, exprs: Vec<Expr>, output_schema: Schema) -> Self {
-        Self {
-            input,
-            exprs,
-            output_schema,
+    pub fn new(
+        input: Box<dyn PhysicalOperator>,
+        exprs: Vec<Expr>,
+        output_schema: Schema,
+    ) -> Result<Self, DomainError> {
+        let schema = input.schema();
+        let mut bound_exprs = Vec::with_capacity(exprs.len());
+        for e in &exprs {
+            bound_exprs.push(bind_expr_columns(e, schema)?);
         }
+
+        Ok(Self {
+            input,
+            bound_exprs,
+            output_schema,
+        })
     }
 }
 
 impl PhysicalOperator for ProjectionOperator {
-    /// Mengembalikan skema keluaran baru hasil proyeksi.
+    #[inline]
     fn schema(&self) -> &Schema {
         &self.output_schema
     }
 
-    /// Mengambil baris data berikutnya dari input stream dan mengevaluasi seluruh ekspresi proyeksi.
+    #[inline]
     fn next(&mut self) -> Result<Option<Row>, DomainError> {
         if let Some(row) = self.input.next()? {
-            let mut projected_values = Vec::with_capacity(self.exprs.len());
+            let mut projected_values = Vec::with_capacity(self.bound_exprs.len());
 
-            for expr in &self.exprs {
-                // Pasang referensi self.input.schema() langsung tanpa .clone()!
-                let val = eval_expr(expr, self.input.schema(), &row)?;
-                projected_values.push(val);
+            for expr in &self.bound_exprs {
+                // Evaluasi O(1) direct tanpa Schema Lookup per baris
+                let val = eval_expr(expr, &row)?;
+                projected_values.push(val.into_owned());
             }
 
-            // 💡 Gunakan Row::with_id (bisa meneruskan row.id() asli dari input)
             Ok(Some(Row::with_id(row.id(), projected_values)))
         } else {
             Ok(None)
         }
+    }
+}
+
+/// Helper internal pre-binding kolom
+fn bind_expr_columns(expr: &Expr, schema: &Schema) -> Result<Expr, DomainError> {
+    match expr {
+        Expr::Column(name) => {
+            let idx = schema
+                .get_column_index_by_name(name)
+                .ok_or_else(|| DomainError::ColumnNotFound(Arc::from(name.as_str())))?;
+            Ok(Expr::ColumnIndex(idx))
+        }
+        Expr::Binary { left, op, right } => {
+            let bound_left = bind_expr_columns(left, schema)?;
+            let bound_right = bind_expr_columns(right, schema)?;
+            Ok(Expr::Binary {
+                left: Box::new(bound_left),
+                op: *op,
+                right: Box::new(bound_right),
+            })
+        }
+        Expr::Not(inner) => Ok(Expr::Not(Box::new(bind_expr_columns(inner, schema)?))),
+        Expr::IsNull(inner) => Ok(Expr::IsNull(Box::new(bind_expr_columns(inner, schema)?))),
+        Expr::IsNotNull(inner) => Ok(Expr::IsNotNull(Box::new(bind_expr_columns(inner, schema)?))),
+        Expr::InList { expr, list } => {
+            let bound_target = bind_expr_columns(expr, schema)?;
+            let mut bound_list = Vec::with_capacity(list.len());
+            for item in list {
+                bound_list.push(bind_expr_columns(item, schema)?);
+            }
+            Ok(Expr::InList {
+                expr: Box::new(bound_target),
+                list: bound_list,
+            })
+        }
+        other => Ok(other.clone()),
     }
 }

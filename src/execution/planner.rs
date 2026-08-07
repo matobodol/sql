@@ -1,54 +1,48 @@
 use std::sync::Arc;
 
-use crate::catalog::database::Database;
-use crate::catalog::dml_action::try_index_scan; // Import helper dari dml_action
-use crate::catalog::dql_action::SelectStmt;
-use crate::domain::DomainError;
 use crate::execution::operator::PhysicalOperator;
 use crate::execution::{
-    AggregateOperator, FilterOperator, LimitOperator, MemoryRowIterator, ProjectionOperator,
-    SeqScanOperator, SortOperator,
+    AggregateOperator, FilterOperator, LimitOperator, ProjectionOperator, SeqScanOperator,
+    SortOperator,
 };
+use crate::id::ColumnId;
+use crate::query_logic::dml_action::try_index_scan;
 use crate::{
-    AggregateFunc, ColumnDef, ColumnId, Expr, IndexScanOperator, Schema, SqlType, SqlValue,
+    AggregateFunc, Column, DomainError, Expr, IndexScanOperator, Schema, SelectStmt, SqlType,
+    SqlValue, TableStorage,
 };
 
 pub struct PhysicalPlanner;
 
 impl PhysicalPlanner {
     pub fn build_plan(
-        db: &Database,
-        table_name: &str,
+        table: &TableStorage,
+        schema: &Schema,
         stmt: &SelectStmt,
     ) -> Result<Box<dyn PhysicalOperator>, DomainError> {
-        let table = db.get_table(table_name)?;
-        let schema = table.schema();
-
         // ------------------------------------------------------------------
         // LANGKAH 1: Inisialisasi Root Scan Operator (IndexScan vs SeqScan)
         // ------------------------------------------------------------------
-        // ------------------------------------------------------------------
-        // LANGKAH 1 & 2: Root Scan & Filtering
-        // ------------------------------------------------------------------
         let (mut plan, is_index_scan): (Box<dyn PhysicalOperator>, bool) =
-            if let Some(candidate_ids) = try_index_scan(table, stmt.selection.as_ref()) {
-                (Box::new(IndexScanOperator::new(table, candidate_ids)), true)
-            } else {
-                let rows_arc = Arc::new(table.rows().to_vec());
-                let memory_iter = Box::new(MemoryRowIterator::new(rows_arc));
+            if let Some(candidate_ids) = try_index_scan(table, schema, stmt.selection.as_ref()) {
                 (
-                    Box::new(SeqScanOperator::new(memory_iter, schema.clone())),
+                    Box::new(IndexScanOperator::new(table, schema.clone(), candidate_ids)),
+                    true,
+                )
+            } else {
+                let rows_arc = table.row_store().rows_arc();
+                (
+                    Box::new(SeqScanOperator::new(rows_arc, schema.clone())),
                     false,
                 )
             };
 
         // ------------------------------------------------------------------
-        // LANGKAH 2: Tumpuk FilterOperator (WHERE) jika ada predikat
+        // LANGKAH 2: Tumpuk FilterOperator (WHERE) jika bukan index scan murni
         // ------------------------------------------------------------------
-        // Hanya tambahkan FilterOperator jika BUtuh (misal Sequential Scan)
         if let Some(ref predicate) = stmt.selection {
             if !is_index_scan {
-                plan = Box::new(FilterOperator::new(plan, predicate.clone()));
+                plan = Box::new(FilterOperator::new(plan, predicate.clone())?);
             }
         }
 
@@ -82,7 +76,7 @@ impl PhysicalPlanner {
                 plan,
                 stmt.projection.clone(),
                 proj_schema,
-            ));
+            )?);
         }
 
         // ------------------------------------------------------------------
@@ -100,7 +94,6 @@ impl PhysicalPlanner {
 // HELPER FUNCTIONS FOR SCHEMA BUILDING
 // ----------------------------------------------------------------------
 
-/// Helper internal untuk membangun skema keluaran dari operator agregasi (`AggregateOperator`).
 fn build_aggregate_schema(
     child_schema: &Schema,
     group_by: &[ColumnId],
@@ -110,7 +103,7 @@ fn build_aggregate_schema(
 
     for &col_id in group_by {
         let col_def = child_schema.get_column_by_id(col_id).ok_or_else(|| {
-            DomainError::EvaluationError(format!(
+            DomainError::eval_error(format!(
                 "Kolom GROUP BY dengan ID {:?} tidak ditemukan",
                 col_id
             ))
@@ -127,17 +120,12 @@ fn build_aggregate_schema(
             AggregateFunc::Max(_) => format!("max_{i}"),
         };
 
-        cols.push(ColumnDef::new(
-            ColumnId(9900 + i as u32),
-            name,
-            SqlType::Float,
-        ));
+        cols.push(Column::new(ColumnId(9900 + i as u32), name, SqlType::Float));
     }
 
     Schema::new(cols)
 }
 
-/// Helper internal untuk membangun skema keluaran dari operator proyeksi (`ProjectionOperator`).
 fn build_projection_schema(
     child_schema: &Schema,
     projection: &[Expr],
@@ -145,43 +133,36 @@ fn build_projection_schema(
     let mut cols = Vec::with_capacity(projection.len());
 
     for (i, expr) in projection.iter().enumerate() {
-        let col_type = match expr {
-            Expr::Column(col_id) => {
-                let def = child_schema.get_column_by_id(*col_id).ok_or_else(|| {
-                    DomainError::EvaluationError(format!(
-                        "Kolom ID {:?} tidak ditemukan dalam proyeksi",
-                        col_id
-                    ))
-                })?;
-                def.sql_type.clone()
+        let (col_name, col_type) = match expr {
+            Expr::Column(name) => {
+                let def = child_schema
+                    .get_column_by_name(name)
+                    .ok_or_else(|| DomainError::ColumnNotFound(Arc::from(name.as_str())))?;
+                (name.clone(), def.sql_type.clone())
             }
-            Expr::Literal(val) => match val {
-                SqlValue::Null => SqlType::Int,
-                SqlValue::Int(_) => SqlType::Int,
-                SqlValue::Float(_) => SqlType::Float,
-                SqlValue::Text(_) => SqlType::Text,
-                SqlValue::Bool(_) => SqlType::Bool,
-                SqlValue::Bytes(_) => SqlType::Bytes,
-                SqlValue::Timestamp(_) => SqlType::Timestamp,
-                SqlValue::Date(_) => SqlType::Date,
-                SqlValue::Time(_) => SqlType::Time,
-
-                // Inferensi Enum & Custom dari SqlValue
-                SqlValue::Enum { type_name, .. } => SqlType::Enum {
-                    name: type_name.clone(),
-                    variants: vec![],
-                },
-                SqlValue::Custom { type_name, .. } => SqlType::Custom(type_name.clone()),
-            },
-
-            _ => SqlType::Text,
+            Expr::Literal(val) => {
+                let t = match val {
+                    SqlValue::Null => SqlType::Int,
+                    SqlValue::Int(_) => SqlType::Int,
+                    SqlValue::Float(_) => SqlType::Float,
+                    SqlValue::Text(_) => SqlType::Text,
+                    SqlValue::Bool(_) => SqlType::Bool,
+                    SqlValue::Bytes(_) => SqlType::Bytes,
+                    SqlValue::Timestamp(_) => SqlType::Timestamp,
+                    SqlValue::Date(_) => SqlType::Date,
+                    SqlValue::Time(_) => SqlType::Time,
+                    SqlValue::Enum { type_name, .. } => SqlType::Enum {
+                        name: type_name.to_string(),
+                        variants: vec![],
+                    },
+                    SqlValue::Custom { type_name, .. } => SqlType::Custom(type_name.to_string()),
+                };
+                (format!("col_{i}"), t)
+            }
+            _ => (format!("col_{i}"), SqlType::Text),
         };
 
-        cols.push(ColumnDef::new(
-            ColumnId(8800 + i as u32),
-            format!("col_{i}"),
-            col_type,
-        ));
+        cols.push(Column::new(ColumnId(8800 + i as u32), col_name, col_type));
     }
 
     Schema::new(cols)

@@ -1,22 +1,21 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, btree_map::Entry};
 use std::ops::Bound;
 
-use super::traits::Index;
-use crate::domain::domain_error::DomainError;
-use crate::domain::id::RowId;
-use crate::domain::types::sql_value::SqlValue;
+use crate::id::RowId;
+use crate::{DomainError, SqlValue};
 
-/// Implementasi BTree Index berbasis `BTreeMap`.
+use super::traits::Index;
+
+/// Implementasi BTree Index yang dioptimalkan memori & performanya.
 #[derive(Debug, Clone)]
 pub struct BTreeIndex {
-    /// Pemetaan dari `SqlValue` ke kumpulan `RowId` unik (`BTreeSet`).
-    map: BTreeMap<SqlValue, BTreeSet<RowId>>,
+    /// Pemetaan dari `SqlValue` ke kumpulan `RowId`
+    map: BTreeMap<SqlValue, Vec<RowId>>,
     /// Status apakah indeks mewajibkan nilai unik.
     is_unique: bool,
 }
 
 impl BTreeIndex {
-    /// Membuat instance `BTreeIndex` baru.
     pub fn new(is_unique: bool) -> Self {
         Self {
             map: BTreeMap::new(),
@@ -30,52 +29,46 @@ impl Index for BTreeIndex {
         Box::new(self.clone())
     }
 
-    /// Memasukkan entri `(SqlValue, RowId)` secara atomik.
-    ///
-    /// Sesuai Standar ANSI SQL:
-    /// Jika `key` bernilai `NULL`, batasan `UNIQUE` diabaikan karena `NULL != NULL`.
-    fn insert(&mut self, key: SqlValue, row_id: RowId) -> Result<(), DomainError> {
+    /// Memasukkan entri secara zero-copy (hanya mengkloning key jika key belum ada di BTree)
+    fn insert(&mut self, key: &SqlValue, row_id: RowId) -> Result<(), DomainError> {
         match self.map.entry(key.clone()) {
-            std::collections::btree_map::Entry::Occupied(mut entry) => {
+            Entry::Occupied(mut entry) => {
                 // Sesuai standar SQL: Hanya nilai NON-NULL yang diperiksa keunikannya.
                 if self.is_unique && !key.is_null() {
-                    return Err(DomainError::InvalidExpression(format!(
+                    return Err(DomainError::invalid_expr(format!(
                         "Pelanggaran keunikan indeks BTree pada nilai '{:?}'",
                         key
                     )));
                 }
 
-                // Masukkan RowId ke BTreeSet
-                entry.get_mut().insert(row_id);
+                let rows = entry.get_mut();
+                if !rows.contains(&row_id) {
+                    rows.push(row_id);
+                }
             }
-            std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(BTreeSet::from([row_id]));
+            Entry::Vacant(entry) => {
+                entry.insert(vec![row_id]);
             }
         }
 
         Ok(())
     }
 
-    /// Menghapus spesifik `RowId` dari entri `key`.
     fn remove(&mut self, key: &SqlValue, row_id: RowId) -> Result<(), DomainError> {
-        if let Some(rows) = self.map.get_mut(key) {
-            rows.remove(&row_id);
+        if let Entry::Occupied(mut entry) = self.map.entry(key.clone()) {
+            let rows = entry.get_mut();
+            rows.retain(|&id| id != row_id);
             if rows.is_empty() {
-                self.map.remove(key);
+                entry.remove();
             }
         }
         Ok(())
     }
 
-    /// Mencari `RowId` dengan pencocokan nilai tepat (*exact match*).
     fn lookup(&self, key: &SqlValue) -> Vec<RowId> {
-        self.map
-            .get(key)
-            .map(|set| set.iter().copied().collect())
-            .unwrap_or_default()
+        self.map.get(key).cloned().unwrap_or_default()
     }
 
-    /// Mencari `RowId` dalam batas rentang menggunakan `std::ops::Bound`.
     fn range_lookup(&self, min: Bound<&SqlValue>, max: Bound<&SqlValue>) -> Vec<RowId> {
         self.map
             .range((min, max))
@@ -83,7 +76,6 @@ impl Index for BTreeIndex {
             .collect()
     }
 
-    /// Memeriksa apakah indeks bersifat UNIQUE.
     fn is_unique(&self) -> bool {
         self.is_unique
     }

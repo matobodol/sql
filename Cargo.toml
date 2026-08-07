@@ -1,5 +1,5 @@
 [package]
-name = "sql"
+name = "coredb"
 version.workspace = true
 edition.workspace = true
 

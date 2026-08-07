@@ -1,17 +1,16 @@
 use std::fmt::Debug;
 use std::ops::Bound;
 
-use crate::domain::domain_error::DomainError;
-use crate::domain::id::RowId;
-use crate::domain::types::sql_value::SqlValue;
+use crate::id::RowId;
+use crate::{DomainError, SqlValue};
 
 /// Trait abstrak untuk seluruh jenis pengindeksan di database engine.
 pub trait Index: Debug + Send + Sync {
     /// Membuat salinan tertutup (boxed clone) dari instance indeks.
     fn clone_box(&self) -> Box<dyn Index>;
 
-    /// Memasukkan entri `(SqlValue, RowId)` ke dalam indeks secara atomik.
-    fn insert(&mut self, key: SqlValue, row_id: RowId) -> Result<(), DomainError>;
+    /// Memasukkan entri `(&SqlValue, RowId)` ke dalam indeks secara zero-copy.
+    fn insert(&mut self, key: &SqlValue, row_id: RowId) -> Result<(), DomainError>;
 
     /// Menghapus `RowId` tertentu yang terasosiasi dengan `key`.
     fn remove(&mut self, key: &SqlValue, row_id: RowId) -> Result<(), DomainError>;
@@ -20,8 +19,6 @@ pub trait Index: Debug + Send + Sync {
     fn lookup(&self, key: &SqlValue) -> Vec<RowId>;
 
     /// Mencari seluruh `RowId` dalam batas rentang (*range query*) dinamis.
-    ///
-    /// Menerima `std::ops::Bound` untuk mendukung operator `>`, `>=`, `<`, dan `<=`.
     fn range_lookup(&self, min: Bound<&SqlValue>, max: Bound<&SqlValue>) -> Vec<RowId>;
 
     /// Memeriksa apakah indeks dikonfigurasi sebagai UNIQUE index.

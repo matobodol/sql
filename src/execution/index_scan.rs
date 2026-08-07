@@ -1,27 +1,22 @@
-//! Physical operator untuk melakukan pemindaian berbasis indeks (*Index Scan*).
+//! Physical operator untuk pemindaian berbasis indeks (*Index Scan*).
 
-use crate::catalog::table::Table;
-use crate::domain::{DomainError, Row, RowId, Schema};
-use crate::execution::operator::PhysicalOperator;
+use crate::{
+    DomainError, Row, Schema, TableStorage, execution::operator::PhysicalOperator, id::RowId,
+};
 use std::collections::HashSet;
 
-/// Physical operator yang mengeksekusi pencarian baris langsung menggunakan daftar `RowId` dari BTreeIndex.
 pub struct IndexScanOperator {
-    /// Referensi baris-baris pada tabel yang dipindai.
     matching_rows: Vec<Row>,
-    /// Indeks kursor untuk melacak baris saat ini.
     cursor: usize,
-    /// Skema dari tabel.
     schema: Schema,
 }
 
 impl IndexScanOperator {
-    /// Membuat `IndexScanOperator` dengan menyaring baris berdasarkan kandidat `RowId` terindeks.
-    pub fn new(table: &Table, target_row_ids: Vec<RowId>) -> Self {
+    pub fn new(table: &TableStorage, schema: Schema, target_row_ids: Vec<RowId>) -> Self {
         let valid_ids: HashSet<RowId> = target_row_ids.into_iter().collect();
 
-        // Ambil hanya baris fisik yang ID-nya cocok dengan kueri indeks
         let matching_rows: Vec<Row> = table
+            .row_store()
             .rows()
             .iter()
             .filter(|row| valid_ids.contains(&row.id()))
@@ -31,21 +26,23 @@ impl IndexScanOperator {
         Self {
             matching_rows,
             cursor: 0,
-            schema: table.schema().clone(),
+            schema,
         }
     }
 }
 
 impl PhysicalOperator for IndexScanOperator {
+    #[inline]
     fn schema(&self) -> &Schema {
         &self.schema
     }
 
+    #[inline]
     fn next(&mut self) -> Result<Option<Row>, DomainError> {
-        if self.cursor < self.matching_rows.len() {
-            let row = self.matching_rows[self.cursor].clone();
+        // Optimasi: Single-pass bounds check menggunakan `.get()`
+        if let Some(row) = self.matching_rows.get(self.cursor) {
             self.cursor += 1;
-            Ok(Some(row))
+            Ok(Some(row.clone()))
         } else {
             Ok(None)
         }

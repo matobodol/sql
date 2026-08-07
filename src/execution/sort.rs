@@ -1,49 +1,34 @@
 //! Physical operator untuk mengeksekusi pengurutan baris data (`ORDER BY ASC/DESC`).
 
-use super::operator::PhysicalOperator;
-use crate::{
-    domain::{DomainError, Row, Schema},
-    eval_expr,
-    expr::Expr,
-};
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
+use std::sync::Arc;
 use std::vec::IntoIter;
 
-/// Arah pengurutan data.
-#[derive(Debug, Clone, PartialEq, Eq)]
+use super::operator::PhysicalOperator;
+use crate::eval_expr;
+use crate::expr::Expr;
+use crate::{DomainError, Row, Schema, SqlValue};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SortOrder {
-    /// Urutan menaik (Ascending, dari kecil ke besar).
     Ascending,
-    /// Urutan menurun (Descending, dari besar ke kecil).
     Descending,
 }
 
-/// Spesifikasi pengurutan untuk suatu ekspresi/kolom tertentu.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OrderByExpr {
-    /// Ekspresi SQL yang nilai hasilnya dijadikan basis pengurutan.
     pub expr: Expr,
-    /// Arah urutan (`Ascending` atau `Descending`).
     pub order: SortOrder,
 }
 
-/// Physical operator yang bertugas mengumpulkan seluruh baris data dari input stream,
-/// mengurutkannya berdasarkan kriteria multi-ekspresi, dan menyajikannya secara berurutan.
 pub struct SortOperator {
-    /// Physical operator anak yang menjadi sumber input stream data[span_2](start_span)[span_2](end_span).
     input: Box<dyn PhysicalOperator>,
-    /// Daftar kriteria pengurutan (`ORDER BY`)[span_3](start_span)[span_3](end_span).
     order_by: Vec<OrderByExpr>,
-    /// Iterator penampung baris data yang telah diurutkan[span_4](start_span)[span_4](end_span).
     sorted_rows: Option<IntoIter<Row>>,
 }
 
 impl SortOperator {
-    /// Membuat instance `SortOperator` baru[span_5](start_span)[span_5](end_span).
-    ///
-    /// # Arguments
-    /// * `input` - Operator anak yang memasok baris data[span_6](start_span)[span_6](end_span).
-    /// * `order_by` - Vektor spesifikasi ekspresi pengurutan[span_7](start_span)[span_7](end_span).
     pub fn new(input: Box<dyn PhysicalOperator>, order_by: Vec<OrderByExpr>) -> Self {
         Self {
             input,
@@ -52,75 +37,76 @@ impl SortOperator {
         }
     }
 
-    /// Mengambil seluruh baris data dari input stream (*pipeline breaker*)
-    /// lalu mengurutkannya berdasarkan aturan `order_by`[span_8](start_span)[span_8](end_span).
     fn fetch_and_sort(&mut self) -> Result<(), DomainError> {
-        let schema = self.input.schema().clone();
-        let mut rows = Vec::new();
+        let schema = self.input.schema();
 
-        while let Some(row) = self.input.next()? {
-            rows.push(row);
+        // Pre-bind kriteria pengurutan O(1)
+        let mut bound_specs = Vec::with_capacity(self.order_by.len());
+        for spec in &self.order_by {
+            let bound = bind_expr_columns(&spec.expr, schema)?;
+            bound_specs.push((bound, spec.order.clone()));
         }
 
-        let order_by = &self.order_by;
-        let mut sort_error: Option<DomainError> = None;
+        // 1. Kumpulkan seluruh baris data & ekstrak sort keys satu kali per baris
+        let mut annotated_rows: Vec<(Vec<SqlValue>, Row)> = Vec::new();
 
-        rows.sort_by(|a, b| {
-            if sort_error.is_some() {
-                return Ordering::Equal;
+        while let Some(row) = self.input.next()? {
+            let mut keys = Vec::with_capacity(bound_specs.len());
+            for (expr, _) in &bound_specs {
+                let val = eval_expr(expr, &row)?;
+                keys.push(val.into_owned());
             }
+            annotated_rows.push((keys, row));
+        }
 
-            for spec in order_by {
-                let val_a = match eval_expr(&spec.expr, &schema, a) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        sort_error = Some(e);
-                        return Ordering::Equal;
-                    }
-                };
-
-                let val_b = match eval_expr(&spec.expr, &schema, b) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        sort_error = Some(e);
-                        return Ordering::Equal;
-                    }
-                };
-
-                // Langsung gunakan .cmp() bawaan Ord manual SqlValue[span_9](start_span)[span_9](end_span)
-                let ord = val_a.cmp(&val_b);
+        // 2. Sort O(N log N) tanpa re-evaluation
+        annotated_rows.sort_by(|(keys_a, _), (keys_b, _)| {
+            for (i, (_, order)) in bound_specs.iter().enumerate() {
+                let ord = keys_a[i].cmp(&keys_b[i]);
                 if ord != Ordering::Equal {
-                    return match spec.order {
+                    return match order {
                         SortOrder::Ascending => ord,
                         SortOrder::Descending => ord.reverse(),
                     };
                 }
             }
-
             Ordering::Equal
         });
 
-        if let Some(err) = sort_error {
-            return Err(err);
-        }
-
-        self.sorted_rows = Some(rows.into_iter());
+        let sorted_rows: Vec<Row> = annotated_rows.into_iter().map(|(_, row)| row).collect();
+        self.sorted_rows = Some(sorted_rows.into_iter());
         Ok(())
     }
 }
 
 impl PhysicalOperator for SortOperator {
-    /// Mengembalikan skema dari input stream, karena operator `SORT` tidak mengubah struktur kolom[span_10](start_span)[span_10](end_span).
+    #[inline]
     fn schema(&self) -> &Schema {
         self.input.schema()
     }
 
-    /// Mengambil baris data berikutnya dari hasil pengurutan yang tersimpan dalam cache iterator[span_11](start_span)[span_11](end_span).
+    #[inline]
     fn next(&mut self) -> Result<Option<Row>, DomainError> {
         if self.sorted_rows.is_none() {
             self.fetch_and_sort()?;
         }
 
-        Ok(self.sorted_rows.as_mut().unwrap().next())
+        if let Some(iter) = &mut self.sorted_rows {
+            Ok(iter.next())
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+fn bind_expr_columns(expr: &Expr, schema: &Schema) -> Result<Expr, DomainError> {
+    match expr {
+        Expr::Column(name) => {
+            let idx = schema
+                .get_column_index_by_name(name)
+                .ok_or_else(|| DomainError::ColumnNotFound(Arc::from(name.as_str())))?;
+            Ok(Expr::ColumnIndex(idx))
+        }
+        other => Ok(other.clone()),
     }
 }

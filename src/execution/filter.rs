@@ -1,48 +1,85 @@
-//! Physical operator untuk mengeksekusi penyaringan baris data (`FILTER` / `WHERE`).
+//! Physical operator untuk penyaringan baris data (`FILTER` / `WHERE`) dengan ekspresi yang sudah di-bind.
 
+use std::sync::Arc;
+
+use crate::eval_expr;
 use crate::execution::operator::PhysicalOperator;
-use crate::expr::evaluator::eval_where;
-use crate::{DomainError, Row, Schema, expr::Expr};
+use crate::{DomainError, Expr, Row, Schema, SqlBool};
 
-/// Physical operator yang bertugas memfilter baris data berdasarkan predikat ekspresi SQL.
+/// Physical operator yang bertugas memfilter baris data berdasarkan predikat ter-bind O(1).
 pub struct FilterOperator {
-    /// Physical operator anak yang menjadi sumber input stream data.
     input: Box<dyn PhysicalOperator>,
-    /// Ekspresi logika yang digunakan sebagai kondisi/predikat penyaringan (`WHERE`).
-    predicate: Expr,
+    /// Predikat yang sudah di-bind indeks kolomnya (O(1) access during eval)
+    bound_predicate: Expr,
 }
 
 impl FilterOperator {
-    /// Membuat instance `FilterOperator` baru.
-    ///
-    /// # Arguments
-    /// * `input` - Operator anak yang memasok baris data.
-    /// * `predicate` - Ekspresi logika yang dievaluasi untuk setiap baris data.
-    pub fn new(input: Box<dyn PhysicalOperator>, predicate: Expr) -> Self {
-        Self { input, predicate }
+    /// Membuat instance `FilterOperator` baru dan langsung melakukan pre-binding pada predikat.
+    pub fn new(input: Box<dyn PhysicalOperator>, predicate: Expr) -> Result<Self, DomainError> {
+        let schema = input.schema();
+        let bound_predicate = bind_expr_columns(&predicate, schema)?;
+
+        Ok(Self {
+            input,
+            bound_predicate,
+        })
     }
 }
 
 impl PhysicalOperator for FilterOperator {
-    /// Mengembalikan skema dari input stream, karena operator penyaring tidak mengubah struktur kolom.
+    #[inline]
     fn schema(&self) -> &Schema {
         self.input.schema()
     }
 
-    /// Mengambil baris berikutnya dari input stream yang memenuhi kondisi `predicate`.
-    ///
-    /// Mengikuti aturan ANSI SQL 3-Valued Logic (3VL): Hanya baris dengan hasil evaluasi `True` murni
-    /// yang diteruskan. Hasil `False` maupun `Unknown` (`NULL`) akan diabaikan.
     fn next(&mut self) -> Result<Option<Row>, DomainError> {
-        // Fetch baris secara berurutan sampai menemukan baris yang lolos predikat
         while let Some(row) = self.input.next()? {
-            // Evaluasi predikat menggunakan helper SSOT eval_where
-            if eval_where(&self.predicate, self.input.schema(), &row)? {
+            // Evaluasi O(1) berbasis bound_predicate
+            let res = eval_expr(&self.bound_predicate, &row)?;
+            let sql_bool = SqlBool::try_from(res.as_ref())?;
+
+            if sql_bool.is_true() {
                 return Ok(Some(row));
             }
         }
 
-        // Stream data telah habis
         Ok(None)
+    }
+}
+
+/// Pre-binding parser: Mengonversi `Expr::Column(name)` ke `Expr::ColumnIndex(offset)` O(1)
+fn bind_expr_columns(expr: &Expr, schema: &Schema) -> Result<Expr, DomainError> {
+    match expr {
+        Expr::Column(name) => {
+            let idx = schema
+                .get_column_index_by_name(name)
+                .ok_or_else(|| DomainError::ColumnNotFound(Arc::from(name.as_str())))?;
+            Ok(Expr::ColumnIndex(idx))
+        }
+        Expr::Binary { left, op, right } => {
+            let bound_left = bind_expr_columns(left, schema)?;
+            let bound_right = bind_expr_columns(right, schema)?;
+            Ok(Expr::Binary {
+                left: Box::new(bound_left),
+                op: *op,
+                right: Box::new(bound_right),
+            })
+        }
+        Expr::Not(inner) => Ok(Expr::Not(Box::new(bind_expr_columns(inner, schema)?))),
+        Expr::IsNull(inner) => Ok(Expr::IsNull(Box::new(bind_expr_columns(inner, schema)?))),
+        Expr::IsNotNull(inner) => Ok(Expr::IsNotNull(Box::new(bind_expr_columns(inner, schema)?))),
+        Expr::InList { expr, list } => {
+            let bound_target = bind_expr_columns(expr, schema)?;
+            let bound_list = list
+                .iter()
+                .map(|item| bind_expr_columns(item, schema))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Expr::InList {
+                expr: Box::new(bound_target),
+                list: bound_list,
+            })
+        }
+        // Varian literal atau yang sudah ter-bind
+        other => Ok(other.clone()),
     }
 }

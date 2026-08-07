@@ -1,37 +1,41 @@
-//! Physical operator untuk melakukan pemindaian berurutan (*Sequential Scan*) pada sebuah tabel.
+//! Physical operator untuk Sequential Scan pada tabel.
 
-use crate::domain::{DomainError, Row, Schema};
-use crate::execution::iterator::RowIterator;
 use crate::execution::operator::PhysicalOperator;
+use crate::{DomainError, Row, Schema};
+use std::sync::Arc;
 
-/// Physical operator yang bertugas membungkus [`RowIterator`] untuk menyediakan
-/// input stream data awal (Sequential Scan / Table Scan) ke dalam Volcano pipeline.
 pub struct SeqScanOperator {
-    /// Sumber data baris abstrak yang mengimplementasikan trait [`RowIterator`].
-    iterator: Box<dyn RowIterator>,
-    /// Skema dari tabel/relasi yang sedang dipindai.
+    rows: Arc<Vec<Row>>,
+    cursor: usize,
     schema: Schema,
 }
 
 impl SeqScanOperator {
-    /// Membuat instance `SeqScanOperator` baru.
-    ///
-    /// # Arguments
-    /// * `iterator` - Abstraksi iterator sumber data baris (misal: `MemoryRowIterator` atau `DiskRowIterator`).
-    /// * `schema` - Skema tabel yang dipindai.
-    pub fn new(iterator: Box<dyn RowIterator>, schema: Schema) -> Self {
-        Self { iterator, schema }
+    /// Inisialisasi SeqScan langsung dari Arc slice baris data
+    #[inline]
+    pub fn new(rows: Arc<Vec<Row>>, schema: Schema) -> Self {
+        Self {
+            rows,
+            cursor: 0,
+            schema,
+        }
     }
 }
 
 impl PhysicalOperator for SeqScanOperator {
-    /// Mengembalikan skema tabel yang dipindai.
+    #[inline]
     fn schema(&self) -> &Schema {
         &self.schema
     }
 
-    /// Mengambil baris data berikutnya dari storage layer iterator.
+    #[inline]
     fn next(&mut self) -> Result<Option<Row>, DomainError> {
-        self.iterator.next_row()
+        // Optimasi: Eliminasi double bounds-checking menggunakan `.get()`
+        if let Some(row) = self.rows.get(self.cursor) {
+            self.cursor += 1;
+            Ok(Some(row.clone()))
+        } else {
+            Ok(None)
+        }
     }
 }
