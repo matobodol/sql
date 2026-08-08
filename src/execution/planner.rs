@@ -7,9 +7,20 @@ use crate::execution::{
 };
 use crate::query_logic::dml_action::try_index_scan;
 use crate::{
-    AggregateFunc, Column, ColumnId, DomainError, Expr, IndexScanOperator, Schema, SelectStmt,
+    AggregateFunc, Column, ColumnId, DomainError, Expr, IndexScanOperator, OrderByExpr, Schema,
     SqlType, SqlValue, TableStorage,
 };
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectStmt {
+    pub projection: Vec<Expr>,
+    pub selection: Option<Expr>,
+    pub group_by: Vec<ColumnId>,
+    pub aggregates: Vec<AggregateFunc>,
+    pub order_by: Vec<OrderByExpr>,
+    pub limit: Option<usize>,
+    pub offset: usize,
+}
 
 pub struct PhysicalPlanner;
 

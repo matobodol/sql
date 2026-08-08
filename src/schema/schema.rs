@@ -4,8 +4,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ColumnConstraint, ColumnId, DomainError, Expr, Row, RowId, SqlType, SqlValue, TableConstraint,
-    eval_expr, schema::Column,
+    ColumnConstraint, ColumnId, DomainError, Expr, SqlType, SqlValue, TableConstraint,
+    schema::Column, validator::validate_enum_variants,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -127,7 +127,7 @@ impl Schema {
         for col in columns {
             let col_name_lower = col.name.to_lowercase();
 
-            col.sql_type.validate_enum_variants()?;
+            validate_enum_variants(&col.sql_type)?;
 
             if !seen_names.insert(col_name_lower) {
                 return Err(DomainError::eval_error(format!(
@@ -341,6 +341,26 @@ impl Schema {
         &self.table_constraints
     }
 
+    #[inline]
+    pub fn has_check_constraints(&self) -> bool {
+        self.has_check_constraints
+    }
+
+    #[inline]
+    pub fn bound_column_checks(&self) -> &[(usize, Expr)] {
+        &self.bound_column_checks
+    }
+
+    #[inline]
+    pub fn bound_table_checks(&self) -> &[Expr] {
+        &self.bound_table_checks
+    }
+
+    #[inline]
+    pub fn index_of(&self, col_name: &str) -> Option<usize> {
+        self.index(col_name)
+    }
+
     pub fn index(&self, col_name: &str) -> Option<usize> {
         if let Some(idx) = self
             .columns
@@ -358,65 +378,6 @@ impl Schema {
         }
 
         None
-    }
-
-    #[inline]
-    pub fn index_of(&self, col_name: &str) -> Option<usize> {
-        self.index(col_name)
-    }
-
-    pub fn validate_row(&self, values: &[SqlValue]) -> Result<(), DomainError> {
-        if values.len() != self.columns.len() {
-            return Err(DomainError::eval_error(format!(
-                "Jumlah kolom tidak sesuai: mengharapkan {}, ditemukan {}",
-                self.columns.len(),
-                values.len()
-            )));
-        }
-
-        for (col, val) in self.columns.iter().zip(values.iter()) {
-            if val.is_null() {
-                if !col.is_nullable() {
-                    return Err(DomainError::eval_error(format!(
-                        "Kolom '{}' tidak boleh NULL",
-                        col.name
-                    )));
-                }
-            } else if !val.matches_type(&col.sql_type) {
-                return Err(DomainError::TypeMismatch {
-                    expected: Arc::from(format!("{:?}", col.sql_type).as_str()),
-                    found: Arc::from(format!("{:?}", val).as_str()),
-                });
-            }
-        }
-
-        // Fast-path: Skip evaluasi jika tidak ada CHECK constraint
-        if !self.has_check_constraints {
-            return Ok(());
-        }
-
-        let temp_row = Row::with_id(RowId::from(0u64), values.to_vec());
-
-        for (col_idx, bound_expr) in &self.bound_column_checks {
-            let res = eval_expr(bound_expr, &temp_row)?;
-            if !res.is_null() && res.as_ref() == &SqlValue::Bool(false) {
-                return Err(DomainError::eval_error(format!(
-                    "Pelanggaran CHECK constraint pada kolom '{}'",
-                    self.columns[*col_idx].name
-                )));
-            }
-        }
-
-        for bound_expr in &self.bound_table_checks {
-            let res = eval_expr(bound_expr, &temp_row)?;
-            if !res.is_null() && res.as_ref() == &SqlValue::Bool(false) {
-                return Err(DomainError::eval_error(
-                    "Pelanggaran CHECK constraint pada tabel",
-                ));
-            }
-        }
-
-        Ok(())
     }
 }
 

@@ -7,18 +7,10 @@ use crate::schema::column_constraint::ColumnConstraint;
 use crate::storage::table_store::TableStorage;
 use crate::types::sql_type::SqlType;
 use crate::types::sql_value::SqlValue;
+use crate::validator::validate_enum_variants;
 use crate::{ColumnPosition, DomainError, QueryResult, TableId};
 
-pub(crate) fn create_table_action(
-    catalog: &mut CatalogStore,
-    tables: &mut HashMap<TableId, TableStorage>,
-    table_name: &str,
-    raw_columns: Vec<(String, SqlType, Vec<ColumnConstraint>)>,
-) -> Result<QueryResult, DomainError> {
-    create_table(catalog, tables, table_name, raw_columns)?;
-    Ok(QueryResult::Ok)
-}
-pub(crate) fn create_table(
+pub(crate) fn apply_create_table(
     catalog: &mut CatalogStore,
     tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,
@@ -40,17 +32,17 @@ pub(crate) fn create_table(
     Ok(table_id)
 }
 
-pub(crate) fn drop_table(
+pub(crate) fn apply_drop_table(
     catalog: &mut CatalogStore,
     tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,
 ) -> Result<QueryResult, DomainError> {
     let table_id = catalog.unregister_table(table_name)?;
     tables.remove(&table_id);
-    Ok(QueryResult::Ok)
+    Ok(QueryResult::OK)
 }
 
-pub(crate) fn execute_add_columns(
+pub(crate) fn apply_add_columns(
     catalog: &mut CatalogStore,
     tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,
@@ -127,7 +119,7 @@ pub(crate) fn execute_add_columns(
     Ok(())
 }
 
-pub(crate) fn execute_drop_column(
+pub(crate) fn apply_drop_column(
     catalog: &mut CatalogStore,
     tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,
@@ -162,7 +154,7 @@ pub(crate) fn execute_drop_column(
     Ok(())
 }
 
-pub(crate) fn execute_rename_column(
+pub(crate) fn apply_rename_column(
     catalog: &mut CatalogStore,
     tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,
@@ -189,7 +181,7 @@ pub(crate) fn execute_rename_column(
     Ok(())
 }
 
-pub(crate) fn execute_rename_table(
+pub(crate) fn apply_rename_table(
     catalog: &mut CatalogStore,
     tables: &mut HashMap<TableId, TableStorage>,
     old_name: &str,
@@ -201,17 +193,17 @@ pub(crate) fn execute_rename_table(
         table_storage.set_name(new_name);
     }
 
-    Ok(QueryResult::Ok)
+    Ok(QueryResult::OK)
 }
 
-pub(crate) fn execute_modify_column_type(
+pub(crate) fn apply_modify_column_type(
     catalog: &mut CatalogStore,
     tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,
     col_name: &str,
     new_type: SqlType,
 ) -> Result<(), DomainError> {
-    new_type.validate_enum_variants()?;
+    validate_enum_variants(&new_type)?;
 
     let table_id = catalog
         .get_table_id(table_name)
@@ -233,7 +225,7 @@ pub(crate) fn execute_modify_column_type(
     Ok(())
 }
 
-pub(crate) fn execute_add_constraint(
+pub(crate) fn apply_add_constraint(
     catalog: &mut CatalogStore,
     tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,
@@ -278,7 +270,7 @@ pub(crate) fn execute_add_constraint(
     Ok(())
 }
 
-pub(crate) fn execute_drop_constraint(
+pub(crate) fn apply_drop_constraint(
     catalog: &mut CatalogStore,
     tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,
@@ -305,7 +297,7 @@ pub(crate) fn execute_drop_constraint(
     Ok(())
 }
 
-pub(crate) fn execute_set_default(
+pub(crate) fn apply_set_default(
     catalog: &mut CatalogStore,
     tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,

@@ -3,6 +3,7 @@ use std::ops::Bound;
 use std::sync::Arc;
 
 use crate::table_store::TableStorage;
+use crate::validator::validate_row;
 use crate::{
     AutoIncrement, BinaryOp, ColumnId, Database, DomainError, Expr, RowId, Schema, SqlValue,
     eval_expr, eval_where,
@@ -64,9 +65,9 @@ pub(crate) fn handle_insert(
             let is_null = row_values[i].is_null();
 
             if col.is_auto_increment() && is_null {
-                let counter = staged_counters
-                    .get_mut(&col.id)
-                    .expect("Counter auto-increment harus terinisialisasi");
+                let counter = staged_counters.get_mut(&col.id).ok_or_else(|| {
+                    DomainError::exec_error("Counter auto-increment harus terinisialisasi")
+                })?;
 
                 row_values[i] = SqlValue::Int(*counter);
                 let step = match col.auto_increment_config() {
@@ -82,7 +83,7 @@ pub(crate) fn handle_insert(
         }
 
         // Memanggil validate_row yang sudah dioptimasi dengan Fast-Path CHECK constraint
-        schema.validate_row(&row_values)?;
+        validate_row(&schema, &row_values)?;
 
         let index_entries: Vec<(ColumnId, SqlValue)> = indexed_col_indices
             .iter()
@@ -315,7 +316,7 @@ pub(crate) fn handle_update(
                 continue;
             }
 
-            schema.validate_row(&new_values)?;
+            validate_row(&schema, &new_values)?;
 
             let old_entries: Vec<(ColumnId, SqlValue)> = indexed_col_indices
                 .iter()

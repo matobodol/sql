@@ -1,23 +1,9 @@
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::catalog::CatalogStore;
 use crate::command::QueryResult;
-use crate::execution::aggregate::AggregateFunc;
-use crate::execution::sort::OrderByExpr;
-use crate::expr::Expr;
-use crate::planner::PhysicalPlanner;
-use crate::{ColumnId, Database, DomainError, Schema};
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SelectStmt {
-    pub projection: Vec<Expr>,
-    pub selection: Option<Expr>,
-    pub group_by: Vec<ColumnId>,
-    pub aggregates: Vec<AggregateFunc>,
-    pub order_by: Vec<OrderByExpr>,
-    pub limit: Option<usize>,
-    pub offset: usize,
-}
+use crate::planner::{PhysicalPlanner, SelectStmt};
+use crate::{Column, ColumnId, Database, DomainError, Row, RowId, Schema, SqlType, SqlValue};
 
 pub(crate) fn execute_select(
     db: &Database,
@@ -53,4 +39,20 @@ pub(crate) fn execute_select(
         schema: final_schema,
         rows: result_rows,
     })
+}
+
+pub(crate) fn execute_show_tables(catalog: &CatalogStore) -> Result<QueryResult, DomainError> {
+    let col_def = Column::new(ColumnId(1), "table_name", SqlType::Text);
+    let schema = Schema::new(vec![col_def])?;
+
+    let table_names = catalog.list_tables();
+    let mut rows = Vec::with_capacity(table_names.len());
+
+    for (idx, name) in table_names.into_iter().enumerate() {
+        let row_id = RowId((idx + 1) as u64);
+        let values = vec![SqlValue::Text(Arc::from(name))];
+        rows.push(Row::with_id(row_id, values));
+    }
+
+    Ok(QueryResult::Dql { schema, rows })
 }

@@ -2,8 +2,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::catalog::catalog_store::CatalogStore;
+use crate::command::execute_command;
 use crate::storage::table_store::TableStorage;
-use crate::{DomainError, TableId};
+use crate::{CommandAction, DomainError, QueryResult, TableId};
 
 #[derive(Debug, Default)]
 pub struct Database {
@@ -69,5 +70,13 @@ impl Database {
         self.tables
             .get_mut(&table_id)
             .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))
+    }
+
+    pub fn execute(
+        db: &mut Database,
+        table_name: &str,
+        action: CommandAction,
+    ) -> Result<QueryResult, DomainError> {
+        execute_command(db, table_name, action)
     }
 }
