@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Index};
 
-use crate::{DomainError, SqlValue, id::RowId};
+use crate::{DomainError, RowId, SqlValue};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Row {

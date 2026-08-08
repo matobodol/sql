@@ -1,8 +1,6 @@
 //! Physical operator untuk pemindaian berbasis indeks (*Index Scan*).
 
-use crate::{
-    DomainError, Row, Schema, TableStorage, execution::operator::PhysicalOperator, id::RowId,
-};
+use crate::{DomainError, Row, RowId, Schema, TableStorage, execution::operator::PhysicalOperator};
 use std::collections::HashSet;
 
 pub struct IndexScanOperator {

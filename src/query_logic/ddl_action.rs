@@ -2,13 +2,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::catalog::catalog_store::CatalogStore;
-use crate::id::TableId;
 use crate::schema::Column;
 use crate::schema::column_constraint::ColumnConstraint;
 use crate::storage::table_store::TableStorage;
 use crate::types::sql_type::SqlType;
 use crate::types::sql_value::SqlValue;
-use crate::{ColumnPosition, DomainError, QueryResult};
+use crate::{ColumnPosition, DomainError, QueryResult, TableId};
 
 pub(crate) fn create_table_action(
     catalog: &mut CatalogStore,

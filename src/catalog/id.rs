@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[repr(transparent)]
@@ -23,6 +23,18 @@ impl RowId {
         self.0
     }
 }
+impl From<u64> for RowId {
+    #[inline(always)]
+    fn from(id: u64) -> Self {
+        RowId(id)
+    }
+}
+impl From<RowId> for u64 {
+    #[inline(always)]
+    fn from(row_id: RowId) -> Self {
+        row_id.0
+    }
+}
 
 impl From<u32> for ColumnId {
     #[inline(always)]
@@ -42,55 +54,40 @@ impl From<u32> for DatabaseId {
         DatabaseId(id)
     }
 }
-impl From<u64> for RowId {
-    #[inline(always)]
-    fn from(id: u64) -> Self {
-        RowId(id)
-    }
-}
-impl From<RowId> for u64 {
-    #[inline(always)]
-    fn from(row_id: RowId) -> Self {
-        row_id.0
-    }
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IdGenerator {
     #[serde(
-        serialize_with = "serialize_atomic_u64",
-        deserialize_with = "deserialize_atomic_u64"
+        serialize_with = "serialize_atomic_u32",
+        deserialize_with = "deserialize_atomic_u32"
     )]
-    counter: AtomicU64,
+    table_counter: AtomicU32,
+    #[serde(
+        serialize_with = "serialize_atomic_u32",
+        deserialize_with = "deserialize_atomic_u32"
+    )]
+    column_counter: AtomicU32,
 }
 
 impl IdGenerator {
     pub fn new(start_value: u32) -> Self {
         Self {
-            counter: AtomicU64::new(start_value as u64),
+            table_counter: AtomicU32::new(start_value),
+            column_counter: AtomicU32::new(start_value),
         }
     }
 
     #[inline]
-    fn next_u64(&self) -> u64 {
-        self.counter.fetch_add(1, Ordering::Relaxed)
-    }
-
-    #[inline]
-    fn next_u32(&self) -> u32 {
-        let val = self.next_u64();
-        u32::try_from(val).expect("Metadata ID overflow: Melebihi batas u32::MAX!")
-    }
-
-    #[inline]
     pub(crate) fn next_table_id(&self) -> TableId {
-        TableId(self.next_u32())
+        let val = self.table_counter.fetch_add(1, Ordering::Relaxed);
+        TableId(u32::try_from(val).expect("Table ID overflow: Melebihi batas u32::MAX!"))
     }
 
-    #[inline]
-    pub(crate) fn next_column_id(&self) -> ColumnId {
-        ColumnId(self.next_u32())
-    }
+    // #[inline]
+    // pub(crate) fn next_column_id(&self) -> ColumnId {
+    //     let val = self.column_counter.fetch_add(1, Ordering::Relaxed);
+    //     ColumnId(u32::try_from(val).expect("Column ID overflow: Melebihi batas u32::MAX!"))
+    // }
 }
 
 impl Default for IdGenerator {
@@ -99,17 +96,17 @@ impl Default for IdGenerator {
     }
 }
 
-fn serialize_atomic_u64<S>(val: &AtomicU64, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_atomic_u32<S>(val: &AtomicU32, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
-    serializer.serialize_u64(val.load(Ordering::Relaxed))
+    serializer.serialize_u32(val.load(Ordering::Relaxed))
 }
 
-fn deserialize_atomic_u64<'de, D>(deserializer: D) -> Result<AtomicU64, D::Error>
+fn deserialize_atomic_u32<'de, D>(deserializer: D) -> Result<AtomicU32, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let val = u64::deserialize(deserializer)?;
-    Ok(AtomicU64::new(val))
+    let val = u32::deserialize(deserializer)?;
+    Ok(AtomicU32::new(val))
 }

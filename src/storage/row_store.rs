@@ -1,4 +1,4 @@
-use crate::{Row, SqlValue, id::RowId};
+use crate::{Row, RowId, SqlValue};
 use std::collections::HashSet;
 use std::sync::Arc;
 

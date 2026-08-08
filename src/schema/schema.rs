@@ -4,9 +4,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ColumnConstraint, DomainError, Expr, Row, SqlType, SqlValue, TableConstraint, eval_expr,
-    id::{ColumnId, RowId},
-    schema::Column,
+    ColumnConstraint, ColumnId, DomainError, Expr, Row, RowId, SqlType, SqlValue, TableConstraint,
+    eval_expr, schema::Column,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

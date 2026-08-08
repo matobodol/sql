@@ -5,11 +5,10 @@ use crate::execution::{
     AggregateOperator, FilterOperator, LimitOperator, ProjectionOperator, SeqScanOperator,
     SortOperator,
 };
-use crate::id::ColumnId;
 use crate::query_logic::dml_action::try_index_scan;
 use crate::{
-    AggregateFunc, Column, DomainError, Expr, IndexScanOperator, Schema, SelectStmt, SqlType,
-    SqlValue, TableStorage,
+    AggregateFunc, Column, ColumnId, DomainError, Expr, IndexScanOperator, Schema, SelectStmt,
+    SqlType, SqlValue, TableStorage,
 };
 
 pub struct PhysicalPlanner;

@@ -1,8 +1,7 @@
 use std::fmt::Debug;
 use std::ops::Bound;
 
-use crate::id::RowId;
-use crate::{DomainError, SqlValue};
+use crate::{DomainError, RowId, SqlValue};
 
 /// Trait abstrak untuk seluruh jenis pengindeksan di database engine.
 /// Menyediakan interface zero-allocation untuk pencarian dan mutasi baris.

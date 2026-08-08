@@ -5,9 +5,8 @@ use crate::command::QueryResult;
 use crate::execution::aggregate::AggregateFunc;
 use crate::execution::sort::OrderByExpr;
 use crate::expr::Expr;
-use crate::id::ColumnId;
 use crate::planner::PhysicalPlanner;
-use crate::{Database, DomainError, Schema};
+use crate::{ColumnId, Database, DomainError, Schema};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SelectStmt {

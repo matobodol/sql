@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::DomainError;
 use crate::catalog::catalog_store::CatalogStore;
-use crate::id::TableId;
 use crate::storage::table_store::TableStorage;
+use crate::{DomainError, TableId};
 
 #[derive(Debug, Default)]
 pub struct Database {
@@ -57,6 +56,7 @@ impl Database {
             .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))
     }
 
+    #[inline]
     pub fn get_table_storage_mut(
         &mut self,
         table_name: &str,

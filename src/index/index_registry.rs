@@ -1,7 +1,6 @@
 use super::btree::BTreeIndex;
 use super::traits::Index;
-use crate::id::{ColumnId, RowId};
-use crate::{DomainError, SqlValue};
+use crate::{ColumnId, DomainError, RowId, SqlValue};
 use std::collections::HashMap;
 
 /// Registry terpusat yang mengelola seluruh indeks B-Tree pada kolom-kolom tabel.

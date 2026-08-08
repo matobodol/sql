@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ColumnConstraint, SqlType, SqlValue, id::ColumnId, schema::AutoIncrement};
+use crate::{ColumnConstraint, ColumnId, SqlType, SqlValue, schema::AutoIncrement};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Column {

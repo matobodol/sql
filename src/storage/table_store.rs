@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::DomainError;
-use crate::id::{ColumnId, TableId};
 use crate::index::index_registry::IndexRegistry;
 use crate::schema::{AutoIncrement, Schema};
 use crate::storage::row_store::RowStore;
+use crate::{ColumnId, TableId};
 
 #[derive(Debug)]
 pub struct TableStorage {

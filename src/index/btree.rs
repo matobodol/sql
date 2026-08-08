@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
 use std::ops::Bound;
 
-use crate::id::RowId;
-use crate::{DomainError, SqlValue};
+use crate::{DomainError, RowId, SqlValue};
 
 use super::traits::Index;
 
