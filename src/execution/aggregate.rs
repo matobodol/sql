@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::vec::IntoIter;
 
 use crate::execution::operator::PhysicalOperator;
-use crate::{ColumnId, DomainError, Row, RowId, Schema, SqlValue};
+use crate::{ColumnId, DomainError, Row, RowId, Schema, ValueType};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AggregateFunc {
@@ -18,19 +18,19 @@ pub enum AggregateFunc {
 #[derive(Debug, Clone)]
 pub enum Accumulator {
     Count(i64),
-    Sum(SqlValue),
-    Avg { sum: SqlValue, count: i64 },
-    Min(Option<SqlValue>),
-    Max(Option<SqlValue>),
+    Sum(ValueType),
+    Avg { sum: ValueType, count: i64 },
+    Min(Option<ValueType>),
+    Max(Option<ValueType>),
 }
 
 impl Accumulator {
     pub fn new(func: &AggregateFunc) -> Self {
         match func {
             AggregateFunc::Count(_) => Accumulator::Count(0),
-            AggregateFunc::Sum(_) => Accumulator::Sum(SqlValue::Null),
+            AggregateFunc::Sum(_) => Accumulator::Sum(ValueType::Null),
             AggregateFunc::Avg(_) => Accumulator::Avg {
-                sum: SqlValue::Null,
+                sum: ValueType::Null,
                 count: 0,
             },
             AggregateFunc::Min(_) => Accumulator::Min(None),
@@ -39,7 +39,7 @@ impl Accumulator {
     }
 
     #[inline]
-    pub fn update(&mut self, val: &SqlValue) -> Result<(), DomainError> {
+    pub fn update(&mut self, val: &ValueType) -> Result<(), DomainError> {
         if val.is_null() {
             return Ok(());
         }
@@ -75,19 +75,19 @@ impl Accumulator {
         Ok(())
     }
 
-    pub fn evaluate(&self) -> SqlValue {
+    pub fn evaluate(&self) -> ValueType {
         match self {
-            Accumulator::Count(c) => SqlValue::Int(*c),
+            Accumulator::Count(c) => ValueType::Int(*c),
             Accumulator::Sum(val) => val.clone(),
             Accumulator::Avg { sum, count } => {
                 if *count == 0 || sum.is_null() {
-                    SqlValue::Null
+                    ValueType::Null
                 } else {
-                    sum.div(&SqlValue::Int(*count)).unwrap_or(SqlValue::Null)
+                    sum.div(&ValueType::Int(*count)).unwrap_or(ValueType::Null)
                 }
             }
-            Accumulator::Min(val) => val.clone().unwrap_or(SqlValue::Null),
-            Accumulator::Max(val) => val.clone().unwrap_or(SqlValue::Null),
+            Accumulator::Min(val) => val.clone().unwrap_or(ValueType::Null),
+            Accumulator::Max(val) => val.clone().unwrap_or(ValueType::Null),
         }
     }
 }
@@ -145,11 +145,11 @@ impl AggregateOperator {
             agg_target_indices.push(idx_opt);
         }
 
-        let mut groups: HashMap<Vec<SqlValue>, Vec<Accumulator>> = HashMap::new();
-        let count_star_dummy = SqlValue::Int(1);
+        let mut groups: HashMap<Vec<ValueType>, Vec<Accumulator>> = HashMap::new();
+        let count_star_dummy = ValueType::Int(1);
 
         while let Some(row) = self.input.next()? {
-            let group_key: Vec<SqlValue> =
+            let group_key: Vec<ValueType> =
                 group_indices.iter().map(|&idx| row[idx].clone()).collect();
 
             let accumulators = groups

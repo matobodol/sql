@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::ops::Bound;
 
-use crate::{DomainError, RowId, SqlValue};
+use crate::{DomainError, RowId, ValueType};
 
 /// Trait abstrak untuk seluruh jenis pengindeksan di database engine.
 /// Menyediakan interface zero-allocation untuk pencarian dan mutasi baris.
@@ -10,16 +10,16 @@ pub trait Index: Debug + Send + Sync {
     fn clone_box(&self) -> Box<dyn Index>;
 
     /// Memasukkan entri `(&SqlValue, RowId)` ke dalam indeks secara zero-copy.
-    fn insert(&mut self, key: &SqlValue, row_id: RowId) -> Result<(), DomainError>;
+    fn insert(&mut self, key: &ValueType, row_id: RowId) -> Result<(), DomainError>;
 
     /// Menghapus `RowId` tertentu yang terasosiasi dengan `key` tanpa mengkloning key.
-    fn remove(&mut self, key: &SqlValue, row_id: RowId) -> Result<(), DomainError>;
+    fn remove(&mut self, key: &ValueType, row_id: RowId) -> Result<(), DomainError>;
 
     /// Mencari seluruh `RowId` yang cocok persis (*exact match*) tanpa alokasi vektor baru.
-    fn lookup(&self, key: &SqlValue) -> &[RowId];
+    fn lookup(&self, key: &ValueType) -> &[RowId];
 
     /// Mencari seluruh `RowId` dalam batas rentang (*range query*) dinamis.
-    fn range_lookup(&self, min: Bound<&SqlValue>, max: Bound<&SqlValue>) -> Vec<RowId>;
+    fn range_lookup(&self, min: Bound<&ValueType>, max: Bound<&ValueType>) -> Vec<RowId>;
 
     /// Memeriksa apakah indeks dikonfigurasi sebagai UNIQUE index.
     fn is_unique(&self) -> bool;

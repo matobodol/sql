@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 
-use crate::{DomainError, SqlType};
+use crate::{DataType, DomainError};
 
 /// Memvalidasi definisi SqlType, memastikan tidak ada varian Enum yang duplikat
-pub fn validate_enum_variants(sqltype: &SqlType) -> Result<(), DomainError> {
-    if let SqlType::Enum { name, variants } = sqltype {
+pub fn validate_enum_variants(sqltype: &DataType) -> Result<(), DomainError> {
+    if let DataType::Enum { name, variants } = sqltype {
         let mut seen = HashSet::with_capacity(variants.len());
 
         for variant in variants {

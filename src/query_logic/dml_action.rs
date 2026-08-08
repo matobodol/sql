@@ -6,21 +6,21 @@ use crate::TableStorage;
 use crate::expression::{eval_expr, eval_where};
 use crate::validator::validate_row;
 use crate::{
-    AutoIncrement, BinaryOp, ColumnId, Database, DomainError, Expr, RowId, Schema, SqlValue,
+    AutoIncrement, BinaryOp, ColumnId, Database, DomainError, Expr, RowId, Schema, ValueType,
 };
 
 struct StagedUpdate {
     row_idx: usize,
     row_id: RowId,
-    old_entries: Vec<(ColumnId, SqlValue)>,
-    new_entries: Vec<(ColumnId, SqlValue)>,
-    new_row_values: Vec<SqlValue>,
+    old_entries: Vec<(ColumnId, ValueType)>,
+    new_entries: Vec<(ColumnId, ValueType)>,
+    new_row_values: Vec<ValueType>,
 }
 
 pub(crate) fn handle_insert(
     db: &mut Database,
     table_name: &str,
-    raw_rows: Vec<Vec<SqlValue>>,
+    raw_rows: Vec<Vec<ValueType>>,
 ) -> Result<usize, DomainError> {
     if raw_rows.is_empty() {
         return Ok(0);
@@ -48,8 +48,8 @@ pub(crate) fn handle_insert(
 
     struct StagedRow {
         assigned_row_id: RowId,
-        prepared_values: Vec<SqlValue>,
-        index_entries: Vec<(ColumnId, SqlValue)>,
+        prepared_values: Vec<ValueType>,
+        index_entries: Vec<(ColumnId, ValueType)>,
     }
 
     let mut staged_rows = Vec::with_capacity(total_rows);
@@ -58,7 +58,7 @@ pub(crate) fn handle_insert(
 
     for (offset, mut row_values) in raw_rows.into_iter().enumerate() {
         if row_values.len() < columns.len() {
-            row_values.resize(columns.len(), SqlValue::Null);
+            row_values.resize(columns.len(), ValueType::Null);
         }
 
         for (i, col) in columns.iter().enumerate() {
@@ -69,7 +69,7 @@ pub(crate) fn handle_insert(
                     DomainError::exec_error("Counter auto-increment harus terinisialisasi")
                 })?;
 
-                row_values[i] = SqlValue::Int(*counter);
+                row_values[i] = ValueType::Int(*counter);
                 let step = match col.auto_increment_config() {
                     Some(AutoIncrement::Enabled { step, .. }) => *step,
                     _ => 1,
@@ -85,7 +85,7 @@ pub(crate) fn handle_insert(
         // Memanggil validate_row yang sudah dioptimasi dengan Fast-Path CHECK constraint
         validate_row(&schema, &row_values)?;
 
-        let index_entries: Vec<(ColumnId, SqlValue)> = indexed_col_indices
+        let index_entries: Vec<(ColumnId, ValueType)> = indexed_col_indices
             .iter()
             .map(|&(c_idx, col_id)| (col_id, row_values[c_idx].clone()))
             .collect();
@@ -101,7 +101,7 @@ pub(crate) fn handle_insert(
 
     // Komit transaksional ke Indeks B-Tree
     for (offset, staged) in staged_rows.iter().enumerate() {
-        let entries_ref: Vec<(ColumnId, &SqlValue)> = staged
+        let entries_ref: Vec<(ColumnId, &ValueType)> = staged
             .index_entries
             .iter()
             .map(|(col_id, val)| (*col_id, val))
@@ -113,7 +113,7 @@ pub(crate) fn handle_insert(
         {
             // Rollback entri indeks jika terjadi kegagalan unik/kunci
             for rb_staged in staged_rows[..offset].iter() {
-                let rb_entries_ref: Vec<(ColumnId, &SqlValue)> = rb_staged
+                let rb_entries_ref: Vec<(ColumnId, &ValueType)> = rb_staged
                     .index_entries
                     .iter()
                     .map(|(col_id, val)| (*col_id, val))
@@ -129,7 +129,7 @@ pub(crate) fn handle_insert(
 
     *table.auto_increment_counters_mut() = staged_counters;
 
-    let rows_to_insert: Vec<Vec<SqlValue>> = staged_rows
+    let rows_to_insert: Vec<Vec<ValueType>> = staged_rows
         .into_iter()
         .map(|staged| staged.prepared_values)
         .collect();
@@ -172,7 +172,7 @@ pub(crate) fn handle_delete(
     struct StagedDelete {
         row_idx: usize,
         row_id: RowId,
-        index_entries: Vec<(ColumnId, SqlValue)>,
+        index_entries: Vec<(ColumnId, ValueType)>,
     }
 
     let mut staged_deletes = Vec::new();
@@ -191,7 +191,7 @@ pub(crate) fn handle_delete(
 
         if matches_condition {
             let row_id = row.id();
-            let index_entries: Vec<(ColumnId, SqlValue)> = indexed_col_indices
+            let index_entries: Vec<(ColumnId, ValueType)> = indexed_col_indices
                 .iter()
                 .map(|&(c_idx, col_id)| (col_id, row.values()[c_idx].clone()))
                 .collect();
@@ -211,7 +211,7 @@ pub(crate) fn handle_delete(
     let mut removed_count = 0;
 
     for staged in &staged_deletes {
-        let entries_ref: Vec<(ColumnId, &SqlValue)> = staged
+        let entries_ref: Vec<(ColumnId, &ValueType)> = staged
             .index_entries
             .iter()
             .map(|(col_id, val)| (*col_id, val))
@@ -222,7 +222,7 @@ pub(crate) fn handle_delete(
             .remove_entry_ref(staged.row_id, &entries_ref)
         {
             for rb_staged in staged_deletes[..removed_count].iter().rev() {
-                let rb_entries_ref: Vec<(ColumnId, &SqlValue)> = rb_staged
+                let rb_entries_ref: Vec<(ColumnId, &ValueType)> = rb_staged
                     .index_entries
                     .iter()
                     .map(|(col_id, val)| (*col_id, val))
@@ -318,12 +318,12 @@ pub(crate) fn handle_update(
 
             validate_row(&schema, &new_values)?;
 
-            let old_entries: Vec<(ColumnId, SqlValue)> = indexed_col_indices
+            let old_entries: Vec<(ColumnId, ValueType)> = indexed_col_indices
                 .iter()
                 .map(|&(c_idx, col_id)| (col_id, row.values()[c_idx].clone()))
                 .collect();
 
-            let new_entries: Vec<(ColumnId, SqlValue)> = indexed_col_indices
+            let new_entries: Vec<(ColumnId, ValueType)> = indexed_col_indices
                 .iter()
                 .map(|&(c_idx, col_id)| (col_id, new_values[c_idx].clone()))
                 .collect();
@@ -345,13 +345,13 @@ pub(crate) fn handle_update(
     let mut modified_count = 0;
 
     for staged in &staged_updates {
-        let old_entries_ref: Vec<(ColumnId, &SqlValue)> = staged
+        let old_entries_ref: Vec<(ColumnId, &ValueType)> = staged
             .old_entries
             .iter()
             .map(|(col_id, val)| (*col_id, val))
             .collect();
 
-        let new_entries_ref: Vec<(ColumnId, &SqlValue)> = staged
+        let new_entries_ref: Vec<(ColumnId, &ValueType)> = staged
             .new_entries
             .iter()
             .map(|(col_id, val)| (*col_id, val))
@@ -397,13 +397,13 @@ pub(crate) fn handle_update(
 
 fn rollback_index_changes(table: &mut TableStorage, processed_updates: &[StagedUpdate]) {
     for staged in processed_updates.iter().rev() {
-        let old_entries_ref: Vec<(ColumnId, &SqlValue)> = staged
+        let old_entries_ref: Vec<(ColumnId, &ValueType)> = staged
             .old_entries
             .iter()
             .map(|(col_id, val)| (*col_id, val))
             .collect();
 
-        let new_entries_ref: Vec<(ColumnId, &SqlValue)> = staged
+        let new_entries_ref: Vec<(ColumnId, &ValueType)> = staged
             .new_entries
             .iter()
             .map(|(col_id, val)| (*col_id, val))

@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::{
-    ColumnConstraint, ColumnId, Database, DomainError, Expr, Row, Schema, SelectStmt, SqlType,
-    SqlValue, TableId, TableStorage,
+    ColumnConstraint, ColumnId, DataType, Database, DomainError, Expr, Row, Schema, SelectStmt,
+    TableId, TableStorage, ValueType,
     catalog::CatalogStore,
     ddl_action::{
         apply_add_columns, apply_add_constraint, apply_create_table, apply_drop_column,
@@ -35,7 +35,7 @@ pub enum ColumnPosition {
 pub enum TableAction {
     CreateTable {
         name: String,
-        columns: Vec<(String, SqlType, Vec<ColumnConstraint>)>,
+        columns: Vec<(String, DataType, Vec<ColumnConstraint>)>,
     },
     DropTable {
         name: String,
@@ -49,7 +49,7 @@ pub enum TableAction {
 /// Sub-tindakan yang valid di dalam pernyataan ALTER TABLE SQL standar.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DdlAction {
-    AddColumns(Vec<(String, SqlType, Vec<ColumnConstraint>, ColumnPosition)>),
+    AddColumns(Vec<(String, DataType, Vec<ColumnConstraint>, ColumnPosition)>),
     DropColumn(String),
     RenameColumn {
         old_name: String,
@@ -57,7 +57,7 @@ pub enum DdlAction {
     },
     ModifyColumnType {
         col_name: String,
-        new_type: SqlType,
+        new_type: DataType,
     },
     AddConstraint {
         col_name: String,
@@ -69,14 +69,14 @@ pub enum DdlAction {
     },
     SetDefault {
         col_name: String,
-        default_val: Option<SqlValue>,
+        default_val: Option<ValueType>,
     },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DmlAction {
     Insert {
-        rows: Vec<Vec<SqlValue>>,
+        rows: Vec<Vec<ValueType>>,
     },
     Update {
         assignments: HashMap<ColumnId, Expr>,

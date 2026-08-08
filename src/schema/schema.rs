@@ -4,7 +4,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ColumnConstraint, ColumnId, DomainError, Expr, SqlType, SqlValue, TableConstraint,
+    ColumnConstraint, ColumnId, DataType, DomainError, Expr, TableConstraint, ValueType,
     schema::Column, validator::validate_enum_variants,
 };
 
@@ -163,7 +163,7 @@ impl Schema {
                 )));
             }
 
-            if has_auto_increment && !matches!(col.sql_type, SqlType::Int) {
+            if has_auto_increment && !matches!(col.sql_type, DataType::Int) {
                 return Err(DomainError::eval_error(format!(
                     "AutoIncrement pada kolom '{}' hanya dapat digunakan untuk tipe data Int",
                     col.name
@@ -191,7 +191,7 @@ impl Schema {
     pub fn modify_column_type(
         &mut self,
         col_id: ColumnId,
-        new_type: SqlType,
+        new_type: DataType,
     ) -> Result<(), DomainError> {
         let mut staged_columns = self.columns.clone();
         let col = staged_columns
@@ -279,7 +279,7 @@ impl Schema {
     pub fn set_column_default(
         &mut self,
         col_id: ColumnId,
-        default_val: Option<SqlValue>,
+        default_val: Option<ValueType>,
     ) -> Result<(), DomainError> {
         let mut staged_columns = self.columns.clone();
         let col = staged_columns

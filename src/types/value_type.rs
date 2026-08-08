@@ -3,12 +3,12 @@ use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::{DomainError, SqlBool, SqlType};
+use crate::{DataType, DomainError, SqlBool};
 
 /// Representasi Nilai Data SQL di Runtime dengan Zero-Copy Cheap Clone (O(1)).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum SqlValue {
+pub enum ValueType {
     /// Representasi tidak ada nilai
     Null,
     /// Bilangan bulat i64
@@ -42,31 +42,31 @@ pub enum SqlValue {
     },
 }
 
-impl SqlValue {
+impl ValueType {
     // --- HELPER CONSTRUCTOR ZERO-COPY ---
 
     /// Helper instan untuk membuat SqlValue::Text dari &str tanpa boilerplate alokasi berlebih
     pub fn text(s: &str) -> Self {
-        SqlValue::Text(Arc::from(s))
+        ValueType::Text(Arc::from(s))
     }
 
     // --- CONSTRUCTOR HELPER (AUTO DATE/TIME DARI CHRONO UTCTIMESTAMP) ---
 
     /// Mengambil Timestamp saat ini dalam UTC
     pub fn now() -> Self {
-        SqlValue::Timestamp(Utc::now())
+        ValueType::Timestamp(Utc::now())
     }
 
     /// Auto-extract komponen DATE (Lokal) langsung dari DateTime<Utc>
     pub fn date_from_datetime(dt: DateTime<Utc>) -> Self {
         let local_dt: DateTime<Local> = DateTime::from(dt);
-        SqlValue::Date(local_dt.date_naive())
+        ValueType::Date(local_dt.date_naive())
     }
 
     /// Auto-extract komponen TIME (Lokal) langsung dari DateTime<Utc>
     pub fn time_from_datetime(dt: DateTime<Utc>) -> Self {
         let local_dt: DateTime<Local> = DateTime::from(dt);
-        SqlValue::Time(local_dt.time())
+        ValueType::Time(local_dt.time())
     }
 
     /// Helper instan: Ambil tanggal lokal HARI INI
@@ -84,7 +84,7 @@ impl SqlValue {
     /// Parse manual dari String ke Date ("YYYY-MM-DD")
     pub fn parse_date(input: &str) -> Result<Self, DomainError> {
         NaiveDate::parse_from_str(input, "%Y-%m-%d")
-            .map(SqlValue::Date)
+            .map(ValueType::Date)
             .map_err(|e| {
                 DomainError::invalid_expr(format!(
                     "Format tanggal '{input}' salah (Gunakan YYYY-MM-DD): {e}"
@@ -95,11 +95,11 @@ impl SqlValue {
     /// Parse manual dari String ke Time ("HH:MM:SS" atau "HH:MM")
     pub fn parse_time(input: &str) -> Result<Self, DomainError> {
         if let Ok(t) = NaiveTime::parse_from_str(input, "%H:%M:%S") {
-            return Ok(SqlValue::Time(t));
+            return Ok(ValueType::Time(t));
         }
 
         NaiveTime::parse_from_str(input, "%H:%M")
-            .map(SqlValue::Time)
+            .map(ValueType::Time)
             .map_err(|e| {
                 DomainError::invalid_expr(format!(
                     "Format waktu '{input}' salah (Gunakan HH:MM:SS atau HH:MM): {e}"
@@ -109,25 +109,25 @@ impl SqlValue {
 
     // --- VALIDASI TIPE ---
     /// Validasi tipe antara value dan schema mengembalikan boolean.
-    pub fn matches_type(&self, sql_type: &SqlType) -> bool {
+    pub fn matches_type(&self, sql_type: &DataType) -> bool {
         match (self, sql_type) {
-            (SqlValue::Null, _) => true,
-            (SqlValue::Int(_), SqlType::Int) => true,
-            (SqlValue::Float(_), SqlType::Float) => true,
-            (SqlValue::Text(_), SqlType::Text) => true,
-            (SqlValue::Bool(_), SqlType::Bool) => true,
-            (SqlValue::Timestamp(_), SqlType::Timestamp) => true,
-            (SqlValue::Date(_), SqlType::Date) => true,
-            (SqlValue::Time(_), SqlType::Time) => true,
-            (SqlValue::Bytes(_), SqlType::Bytes) => true,
+            (ValueType::Null, _) => true,
+            (ValueType::Int(_), DataType::Int) => true,
+            (ValueType::Float(_), DataType::Float) => true,
+            (ValueType::Text(_), DataType::Text) => true,
+            (ValueType::Bool(_), DataType::Bool) => true,
+            (ValueType::Timestamp(_), DataType::Timestamp) => true,
+            (ValueType::Date(_), DataType::Date) => true,
+            (ValueType::Time(_), DataType::Time) => true,
+            (ValueType::Bytes(_), DataType::Bytes) => true,
 
             // Validasi Enum: defined/name cocok DAN value ada di daftar variants
-            (SqlValue::Enum { type_name, value }, SqlType::Enum { name, variants }) => {
+            (ValueType::Enum { type_name, value }, DataType::Enum { name, variants }) => {
                 type_name.as_ref() == name && variants.contains(&value.to_string())
             }
 
             // Validasi Custom: type_name harus cocok
-            (SqlValue::Custom { type_name, .. }, SqlType::Custom(expected_type)) => {
+            (ValueType::Custom { type_name, .. }, DataType::Custom(expected_type)) => {
                 type_name.as_ref() == expected_type
             }
 
@@ -136,60 +136,60 @@ impl SqlValue {
     }
 }
 
-impl SqlValue {
+impl ValueType {
     /// Mencoba mengonversi (cast) nilai SqlValue ke target SqlType
-    pub fn try_cast_to(&self, target_type: &SqlType) -> Result<SqlValue, DomainError> {
+    pub fn try_cast_to(&self, target_type: &DataType) -> Result<ValueType, DomainError> {
         if self.is_null() {
-            return Ok(SqlValue::Null);
+            return Ok(ValueType::Null);
         }
 
         match (self, target_type) {
             // 1. Same type / No-op
-            (SqlValue::Int(v), SqlType::Int) => Ok(SqlValue::Int(*v)),
-            (SqlValue::Float(v), SqlType::Float) => Ok(SqlValue::Float(*v)),
-            (SqlValue::Text(v), SqlType::Text) => Ok(SqlValue::Text(Arc::clone(v))),
-            (SqlValue::Bool(v), SqlType::Bool) => Ok(SqlValue::Bool(*v)),
+            (ValueType::Int(v), DataType::Int) => Ok(ValueType::Int(*v)),
+            (ValueType::Float(v), DataType::Float) => Ok(ValueType::Float(*v)),
+            (ValueType::Text(v), DataType::Text) => Ok(ValueType::Text(Arc::clone(v))),
+            (ValueType::Bool(v), DataType::Bool) => Ok(ValueType::Bool(*v)),
 
             // 2. Int <-> Float
-            (SqlValue::Int(v), SqlType::Float) => Ok(SqlValue::Float(OrderedFloat(*v as f64))),
-            (SqlValue::Float(v), SqlType::Int) => Ok(SqlValue::Int(v.into_inner() as i64)),
+            (ValueType::Int(v), DataType::Float) => Ok(ValueType::Float(OrderedFloat(*v as f64))),
+            (ValueType::Float(v), DataType::Int) => Ok(ValueType::Int(v.into_inner() as i64)),
 
             // 3. Int/Float/Bool -> Text (Zero-Copy Arc)
-            (SqlValue::Int(v), SqlType::Text) => Ok(SqlValue::Text(Arc::from(v.to_string()))),
-            (SqlValue::Float(v), SqlType::Text) => Ok(SqlValue::Text(Arc::from(v.to_string()))),
-            (SqlValue::Bool(v), SqlType::Text) => Ok(SqlValue::Text(Arc::from(v.to_string()))),
+            (ValueType::Int(v), DataType::Text) => Ok(ValueType::Text(Arc::from(v.to_string()))),
+            (ValueType::Float(v), DataType::Text) => Ok(ValueType::Text(Arc::from(v.to_string()))),
+            (ValueType::Bool(v), DataType::Text) => Ok(ValueType::Text(Arc::from(v.to_string()))),
 
             // 4. Text -> Int/Float/Bool (Parsing)
-            (SqlValue::Text(s), SqlType::Int) => {
-                s.trim().parse::<i64>().map(SqlValue::Int).map_err(|_| {
+            (ValueType::Text(s), DataType::Int) => {
+                s.trim().parse::<i64>().map(ValueType::Int).map_err(|_| {
                     DomainError::eval_error(format!("Gagal mengonversi teks '{s}' ke Int"))
                 })
             }
 
-            (SqlValue::Text(s), SqlType::Float) => s
+            (ValueType::Text(s), DataType::Float) => s
                 .trim()
                 .parse::<f64>()
-                .map(|f| SqlValue::Float(OrderedFloat(f)))
+                .map(|f| ValueType::Float(OrderedFloat(f)))
                 .map_err(|_| {
                     DomainError::eval_error(format!("Gagal mengonversi teks '{s}' ke Float"))
                 }),
 
-            (SqlValue::Text(s), SqlType::Bool) => match s.trim().to_lowercase().as_str() {
-                "true" | "1" | "t" => Ok(SqlValue::Bool(true)),
-                "false" | "0" | "f" => Ok(SqlValue::Bool(false)),
+            (ValueType::Text(s), DataType::Bool) => match s.trim().to_lowercase().as_str() {
+                "true" | "1" | "t" => Ok(ValueType::Bool(true)),
+                "false" | "0" | "f" => Ok(ValueType::Bool(false)),
                 _ => Err(DomainError::eval_error(format!(
                     "Gagal mengonversi teks '{s}' ke Bool"
                 ))),
             },
 
             // Text -> Timestamp/Date/Time
-            (SqlValue::Text(s), SqlType::Date) => Self::parse_date(s),
-            (SqlValue::Text(s), SqlType::Time) => Self::parse_time(s),
+            (ValueType::Text(s), DataType::Date) => Self::parse_date(s),
+            (ValueType::Text(s), DataType::Time) => Self::parse_time(s),
 
             // Enum Validation Cast
-            (SqlValue::Text(s), SqlType::Enum { name, variants }) => {
+            (ValueType::Text(s), DataType::Enum { name, variants }) => {
                 if variants.contains(&s.to_string()) {
-                    Ok(SqlValue::Enum {
+                    Ok(ValueType::Enum {
                         type_name: Arc::from(name.as_str()),
                         value: Arc::clone(s),
                     })
@@ -201,7 +201,7 @@ impl SqlValue {
             }
 
             // Text -> Custom Cast
-            (SqlValue::Text(s), SqlType::Custom(type_name)) => Ok(SqlValue::Custom {
+            (ValueType::Text(s), DataType::Custom(type_name)) => Ok(ValueType::Custom {
                 type_name: Arc::from(type_name.as_str()),
                 value: Arc::clone(s),
             }),
@@ -217,15 +217,15 @@ impl SqlValue {
 use std::cmp::Ordering;
 use std::ops::Not;
 
-impl SqlValue {
+impl ValueType {
     /// Helper untuk memeriksa apakah nilai bernilai NULL
     #[inline]
     pub fn is_null(&self) -> bool {
-        matches!(self, SqlValue::Null)
+        matches!(self, ValueType::Null)
     }
 
     /// EQUAL (=)
-    pub fn eq(&self, other: &SqlValue) -> SqlBool {
+    pub fn eq(&self, other: &ValueType) -> SqlBool {
         if self.is_null() || other.is_null() {
             SqlBool::Unknown
         } else {
@@ -293,59 +293,61 @@ impl SqlValue {
 
 // --- IMPLEMENTASI ORD MANUAL UNTUK BTREE & COMPARISON ---
 
-fn variant_index(val: &SqlValue) -> usize {
+fn variant_index(val: &ValueType) -> usize {
     match val {
-        SqlValue::Null => 0,
-        SqlValue::Int(_) => 1,
-        SqlValue::Float(_) => 2,
-        SqlValue::Text(_) => 3,
-        SqlValue::Bool(_) => 4,
-        SqlValue::Bytes(_) => 5,
-        SqlValue::Timestamp(_) => 6,
-        SqlValue::Date(_) => 7,
-        SqlValue::Time(_) => 8,
-        SqlValue::Enum { .. } => 9,
-        SqlValue::Custom { .. } => 10,
+        ValueType::Null => 0,
+        ValueType::Int(_) => 1,
+        ValueType::Float(_) => 2,
+        ValueType::Text(_) => 3,
+        ValueType::Bool(_) => 4,
+        ValueType::Bytes(_) => 5,
+        ValueType::Timestamp(_) => 6,
+        ValueType::Date(_) => 7,
+        ValueType::Time(_) => 8,
+        ValueType::Enum { .. } => 9,
+        ValueType::Custom { .. } => 10,
     }
 }
 
-impl Ord for SqlValue {
+impl Ord for ValueType {
     fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
-            (SqlValue::Null, SqlValue::Null) => Ordering::Equal,
-            (SqlValue::Null, _) => Ordering::Less,
-            (_, SqlValue::Null) => Ordering::Greater,
+            (ValueType::Null, ValueType::Null) => Ordering::Equal,
+            (ValueType::Null, _) => Ordering::Less,
+            (_, ValueType::Null) => Ordering::Greater,
 
-            (SqlValue::Int(x), SqlValue::Int(y)) => x.cmp(y),
-            (SqlValue::Float(x), SqlValue::Float(y)) => x.cmp(y),
-            (SqlValue::Int(x), SqlValue::Float(y)) => ordered_float::OrderedFloat(*x as f64).cmp(y),
-            (SqlValue::Float(x), SqlValue::Int(y)) => {
+            (ValueType::Int(x), ValueType::Int(y)) => x.cmp(y),
+            (ValueType::Float(x), ValueType::Float(y)) => x.cmp(y),
+            (ValueType::Int(x), ValueType::Float(y)) => {
+                ordered_float::OrderedFloat(*x as f64).cmp(y)
+            }
+            (ValueType::Float(x), ValueType::Int(y)) => {
                 x.cmp(&ordered_float::OrderedFloat(*y as f64))
             }
 
-            (SqlValue::Text(x), SqlValue::Text(y)) => x.cmp(y),
-            (SqlValue::Bool(x), SqlValue::Bool(y)) => x.cmp(y),
-            (SqlValue::Timestamp(x), SqlValue::Timestamp(y)) => x.cmp(y),
-            (SqlValue::Date(x), SqlValue::Date(y)) => x.cmp(y),
-            (SqlValue::Time(x), SqlValue::Time(y)) => x.cmp(y),
-            (SqlValue::Bytes(x), SqlValue::Bytes(y)) => x.cmp(y),
+            (ValueType::Text(x), ValueType::Text(y)) => x.cmp(y),
+            (ValueType::Bool(x), ValueType::Bool(y)) => x.cmp(y),
+            (ValueType::Timestamp(x), ValueType::Timestamp(y)) => x.cmp(y),
+            (ValueType::Date(x), ValueType::Date(y)) => x.cmp(y),
+            (ValueType::Time(x), ValueType::Time(y)) => x.cmp(y),
+            (ValueType::Bytes(x), ValueType::Bytes(y)) => x.cmp(y),
 
             (
-                SqlValue::Enum {
+                ValueType::Enum {
                     type_name: t1,
                     value: v1,
                 },
-                SqlValue::Enum {
+                ValueType::Enum {
                     type_name: t2,
                     value: v2,
                 },
             ) => t1.cmp(t2).then_with(|| v1.cmp(v2)),
             (
-                SqlValue::Custom {
+                ValueType::Custom {
                     type_name: t1,
                     value: v1,
                 },
-                SqlValue::Custom {
+                ValueType::Custom {
                     type_name: t2,
                     value: v2,
                 },
@@ -356,7 +358,7 @@ impl Ord for SqlValue {
     }
 }
 
-impl PartialOrd for SqlValue {
+impl PartialOrd for ValueType {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
@@ -366,102 +368,102 @@ impl PartialOrd for SqlValue {
 // IMPLEMENTASI `From` (Mengubah Tipe Rust -> SqlValue)
 // =============================================================================
 
-impl From<&SqlBool> for SqlValue {
+impl From<&SqlBool> for ValueType {
     fn from(sb: &SqlBool) -> Self {
         match sb {
-            SqlBool::True => SqlValue::Bool(true),
-            SqlBool::False => SqlValue::Bool(false),
-            SqlBool::Unknown => SqlValue::Null,
+            SqlBool::True => ValueType::Bool(true),
+            SqlBool::False => ValueType::Bool(false),
+            SqlBool::Unknown => ValueType::Null,
         }
     }
 }
 
-impl From<SqlBool> for SqlValue {
+impl From<SqlBool> for ValueType {
     fn from(sb: SqlBool) -> Self {
-        SqlValue::from(&sb)
+        ValueType::from(&sb)
     }
 }
 
-impl From<i64> for SqlValue {
+impl From<i64> for ValueType {
     fn from(v: i64) -> Self {
-        SqlValue::Int(v)
+        ValueType::Int(v)
     }
 }
-impl From<i32> for SqlValue {
+impl From<i32> for ValueType {
     fn from(v: i32) -> Self {
-        SqlValue::Int(v as i64)
+        ValueType::Int(v as i64)
     }
 }
-impl From<usize> for SqlValue {
+impl From<usize> for ValueType {
     fn from(v: usize) -> Self {
-        SqlValue::Int(v as i64)
+        ValueType::Int(v as i64)
     }
 }
-impl From<f64> for SqlValue {
+impl From<f64> for ValueType {
     fn from(v: f64) -> Self {
-        SqlValue::Float(OrderedFloat(v))
+        ValueType::Float(OrderedFloat(v))
     }
 }
-impl From<f32> for SqlValue {
+impl From<f32> for ValueType {
     fn from(v: f32) -> Self {
-        SqlValue::Float(OrderedFloat(v as f64))
+        ValueType::Float(OrderedFloat(v as f64))
     }
 }
-impl From<String> for SqlValue {
+impl From<String> for ValueType {
     fn from(v: String) -> Self {
-        SqlValue::Text(Arc::from(v))
+        ValueType::Text(Arc::from(v))
     }
 }
-impl From<&str> for SqlValue {
+impl From<&str> for ValueType {
     fn from(v: &str) -> Self {
-        SqlValue::Text(Arc::from(v))
+        ValueType::Text(Arc::from(v))
     }
 }
-impl From<Arc<str>> for SqlValue {
+impl From<Arc<str>> for ValueType {
     fn from(v: Arc<str>) -> Self {
-        SqlValue::Text(v)
+        ValueType::Text(v)
     }
 }
-impl From<bool> for SqlValue {
+impl From<bool> for ValueType {
     fn from(v: bool) -> Self {
-        SqlValue::Bool(v)
+        ValueType::Bool(v)
     }
 }
-impl From<DateTime<Utc>> for SqlValue {
+impl From<DateTime<Utc>> for ValueType {
     fn from(v: DateTime<Utc>) -> Self {
-        SqlValue::Timestamp(v)
+        ValueType::Timestamp(v)
     }
 }
-impl From<NaiveDate> for SqlValue {
+impl From<NaiveDate> for ValueType {
     fn from(v: NaiveDate) -> Self {
-        SqlValue::Date(v)
+        ValueType::Date(v)
     }
 }
-impl From<NaiveTime> for SqlValue {
+impl From<NaiveTime> for ValueType {
     fn from(v: NaiveTime) -> Self {
-        SqlValue::Time(v)
+        ValueType::Time(v)
     }
 }
-impl From<Vec<u8>> for SqlValue {
+impl From<Vec<u8>> for ValueType {
     fn from(v: Vec<u8>) -> Self {
-        SqlValue::Bytes(Arc::from(v))
+        ValueType::Bytes(Arc::from(v))
     }
 }
-impl From<&[u8]> for SqlValue {
+impl From<&[u8]> for ValueType {
     fn from(v: &[u8]) -> Self {
-        SqlValue::Bytes(Arc::from(v))
+        ValueType::Bytes(Arc::from(v))
     }
 }
 
 // Support otomatis untuk Option<T>
-impl<T> From<Option<T>> for SqlValue
+impl<T> From<Option<T>> for ValueType
 where
-    SqlValue: From<T>,
+    ValueType: From<T>,
 {
     fn from(opt: Option<T>) -> Self {
         match opt {
-            Some(v) => SqlValue::from(v),
-            None => SqlValue::Null,
+            Some(v) => ValueType::from(v),
+            None => ValueType::Null,
         }
     }
 }
@@ -470,23 +472,23 @@ where
 // IMPLEMENTASI `TryFrom` (Mengekstrak SqlValue -> Tipe Rust Asli)
 // =============================================================================
 
-impl TryFrom<SqlValue> for i64 {
+impl TryFrom<ValueType> for i64 {
     type Error = DomainError;
 
-    fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
+    fn try_from(val: ValueType) -> Result<Self, Self::Error> {
         match val {
-            SqlValue::Int(n) => Ok(n),
+            ValueType::Int(n) => Ok(n),
             other => Err(DomainError::conversion("i64", get_variant_name(&other))),
         }
     }
 }
 
-impl TryFrom<SqlValue> for i32 {
+impl TryFrom<ValueType> for i32 {
     type Error = DomainError;
 
-    fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
+    fn try_from(val: ValueType) -> Result<Self, Self::Error> {
         match val {
-            SqlValue::Int(n) => n
+            ValueType::Int(n) => n
                 .try_into()
                 .map_err(|_| DomainError::conversion("i32 (out of bounds)", "i64")),
             other => Err(DomainError::conversion("i32", get_variant_name(&other))),
@@ -494,34 +496,34 @@ impl TryFrom<SqlValue> for i32 {
     }
 }
 
-impl TryFrom<SqlValue> for f64 {
+impl TryFrom<ValueType> for f64 {
     type Error = DomainError;
 
-    fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
+    fn try_from(val: ValueType) -> Result<Self, Self::Error> {
         match val {
-            SqlValue::Float(f) => Ok(f.into_inner()),
+            ValueType::Float(f) => Ok(f.into_inner()),
             other => Err(DomainError::conversion("f64", get_variant_name(&other))),
         }
     }
 }
 
-impl TryFrom<SqlValue> for String {
+impl TryFrom<ValueType> for String {
     type Error = DomainError;
 
-    fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
+    fn try_from(val: ValueType) -> Result<Self, Self::Error> {
         match val {
-            SqlValue::Text(s) => Ok(s.to_string()),
+            ValueType::Text(s) => Ok(s.to_string()),
             other => Err(DomainError::conversion("String", get_variant_name(&other))),
         }
     }
 }
 
-impl TryFrom<SqlValue> for Arc<str> {
+impl TryFrom<ValueType> for Arc<str> {
     type Error = DomainError;
 
-    fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
+    fn try_from(val: ValueType) -> Result<Self, Self::Error> {
         match val {
-            SqlValue::Text(s) => Ok(s),
+            ValueType::Text(s) => Ok(s),
             other => Err(DomainError::conversion(
                 "Arc<str>",
                 get_variant_name(&other),
@@ -530,23 +532,23 @@ impl TryFrom<SqlValue> for Arc<str> {
     }
 }
 
-impl TryFrom<SqlValue> for bool {
+impl TryFrom<ValueType> for bool {
     type Error = DomainError;
 
-    fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
+    fn try_from(val: ValueType) -> Result<Self, Self::Error> {
         match val {
-            SqlValue::Bool(b) => Ok(b),
+            ValueType::Bool(b) => Ok(b),
             other => Err(DomainError::conversion("bool", get_variant_name(&other))),
         }
     }
 }
 
-impl TryFrom<SqlValue> for DateTime<Utc> {
+impl TryFrom<ValueType> for DateTime<Utc> {
     type Error = DomainError;
 
-    fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
+    fn try_from(val: ValueType) -> Result<Self, Self::Error> {
         match val {
-            SqlValue::Timestamp(dt) => Ok(dt),
+            ValueType::Timestamp(dt) => Ok(dt),
             other => Err(DomainError::conversion(
                 "DateTime<Utc>",
                 get_variant_name(&other),
@@ -555,12 +557,12 @@ impl TryFrom<SqlValue> for DateTime<Utc> {
     }
 }
 
-impl TryFrom<SqlValue> for NaiveDate {
+impl TryFrom<ValueType> for NaiveDate {
     type Error = DomainError;
 
-    fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
+    fn try_from(val: ValueType) -> Result<Self, Self::Error> {
         match val {
-            SqlValue::Date(d) => Ok(d),
+            ValueType::Date(d) => Ok(d),
             other => Err(DomainError::conversion(
                 "NaiveDate",
                 get_variant_name(&other),
@@ -569,12 +571,12 @@ impl TryFrom<SqlValue> for NaiveDate {
     }
 }
 
-impl TryFrom<SqlValue> for NaiveTime {
+impl TryFrom<ValueType> for NaiveTime {
     type Error = DomainError;
 
-    fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
+    fn try_from(val: ValueType) -> Result<Self, Self::Error> {
         match val {
-            SqlValue::Time(t) => Ok(t),
+            ValueType::Time(t) => Ok(t),
             other => Err(DomainError::conversion(
                 "NaiveTime",
                 get_variant_name(&other),
@@ -583,44 +585,44 @@ impl TryFrom<SqlValue> for NaiveTime {
     }
 }
 
-impl TryFrom<SqlValue> for Vec<u8> {
+impl TryFrom<ValueType> for Vec<u8> {
     type Error = DomainError;
 
-    fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
+    fn try_from(val: ValueType) -> Result<Self, Self::Error> {
         match val {
-            SqlValue::Bytes(b) => Ok(b.to_vec()),
+            ValueType::Bytes(b) => Ok(b.to_vec()),
             other => Err(DomainError::conversion("Vec<u8>", get_variant_name(&other))),
         }
     }
 }
 
-impl<T> TryFrom<SqlValue> for Option<T>
+impl<T> TryFrom<ValueType> for Option<T>
 where
-    T: TryFrom<SqlValue, Error = DomainError>,
+    T: TryFrom<ValueType, Error = DomainError>,
 {
     type Error = DomainError;
 
-    fn try_from(val: SqlValue) -> Result<Self, Self::Error> {
+    fn try_from(val: ValueType) -> Result<Self, Self::Error> {
         match val {
-            SqlValue::Null => Ok(None),
+            ValueType::Null => Ok(None),
             other => T::try_from(other).map(Some),
         }
     }
 }
 
-fn get_variant_name(val: &SqlValue) -> &'static str {
+fn get_variant_name(val: &ValueType) -> &'static str {
     match val {
-        SqlValue::Null => "Null",
-        SqlValue::Int(_) => "Int",
-        SqlValue::Float(_) => "Float",
-        SqlValue::Text(_) => "Text",
-        SqlValue::Bool(_) => "Bool",
-        SqlValue::Timestamp(_) => "Timestamp",
-        SqlValue::Date(_) => "Date",
-        SqlValue::Time(_) => "Time",
-        SqlValue::Bytes(_) => "Bytes",
-        SqlValue::Enum { .. } => "Enum",
-        SqlValue::Custom { .. } => "Custom",
+        ValueType::Null => "Null",
+        ValueType::Int(_) => "Int",
+        ValueType::Float(_) => "Float",
+        ValueType::Text(_) => "Text",
+        ValueType::Bool(_) => "Bool",
+        ValueType::Timestamp(_) => "Timestamp",
+        ValueType::Date(_) => "Date",
+        ValueType::Time(_) => "Time",
+        ValueType::Bytes(_) => "Bytes",
+        ValueType::Enum { .. } => "Enum",
+        ValueType::Custom { .. } => "Custom",
     }
 }
 

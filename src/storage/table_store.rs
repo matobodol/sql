@@ -93,7 +93,7 @@ impl TableStorage {
     pub fn rebuild_indexes(&mut self, schema: &Schema) -> Result<(), DomainError> {
         self.index_registry.clear();
         for row in self.row_store.rows() {
-            let entries: Vec<(ColumnId, &crate::SqlValue)> = schema
+            let entries: Vec<(ColumnId, &crate::ValueType)> = schema
                 .columns()
                 .iter()
                 .enumerate()

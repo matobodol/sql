@@ -5,8 +5,8 @@ use crate::catalog::catalog_store::CatalogStore;
 use crate::schema::Column;
 use crate::schema::column_constraint::ColumnConstraint;
 use crate::storage::table_store::TableStorage;
-use crate::types::sql_type::SqlType;
-use crate::types::sql_value::SqlValue;
+use crate::types::data_type::DataType;
+use crate::types::value_type::ValueType;
 use crate::validator::validate_enum_variants;
 use crate::{ColumnPosition, DomainError, QueryResult, TableId};
 
@@ -14,7 +14,7 @@ pub(crate) fn apply_create_table(
     catalog: &mut CatalogStore,
     tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,
-    raw_columns: Vec<(String, SqlType, Vec<ColumnConstraint>)>,
+    raw_columns: Vec<(String, DataType, Vec<ColumnConstraint>)>,
 ) -> Result<TableId, DomainError> {
     let table_id = catalog.register_table(table_name)?;
 
@@ -46,7 +46,7 @@ pub(crate) fn apply_add_columns(
     catalog: &mut CatalogStore,
     tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,
-    columns: Vec<(String, SqlType, Vec<ColumnConstraint>, ColumnPosition)>,
+    columns: Vec<(String, DataType, Vec<ColumnConstraint>, ColumnPosition)>,
 ) -> Result<(), DomainError> {
     if columns.is_empty() {
         return Ok(());
@@ -90,7 +90,7 @@ pub(crate) fn apply_add_columns(
         )?;
 
         let col_def = Column::with_constraints(col_id, &col_name, sql_type, constraints);
-        let default_val = col_def.default_value().cloned().unwrap_or(SqlValue::Null);
+        let default_val = col_def.default_value().cloned().unwrap_or(ValueType::Null);
 
         let table_storage = tables
             .get_mut(&table_id)
@@ -201,7 +201,7 @@ pub(crate) fn apply_modify_column_type(
     tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,
     col_name: &str,
-    new_type: SqlType,
+    new_type: DataType,
 ) -> Result<(), DomainError> {
     validate_enum_variants(&new_type)?;
 
@@ -302,7 +302,7 @@ pub(crate) fn apply_set_default(
     tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,
     col_name: &str,
-    default_val: Option<SqlValue>,
+    default_val: Option<ValueType>,
 ) -> Result<(), DomainError> {
     let table_id = catalog
         .get_table_id(table_name)
@@ -316,7 +316,7 @@ pub(crate) fn apply_set_default(
         col.constraints
             .retain(|c| !matches!(c, ColumnConstraint::Default(_)));
         col.constraints
-            .push(ColumnConstraint::Default(SqlValue::from(
+            .push(ColumnConstraint::Default(ValueType::from(
                 default_val.clone(),
             )));
     })?;

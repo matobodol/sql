@@ -1,17 +1,17 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ColumnConstraint, ColumnId, SqlType, SqlValue, schema::AutoIncrement};
+use crate::{ColumnConstraint, ColumnId, DataType, ValueType, schema::AutoIncrement};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Column {
     pub id: ColumnId, // Source of Truth Identifier
     pub name: String, // Logical display name
-    pub sql_type: SqlType,
+    pub sql_type: DataType,
     pub constraints: Vec<ColumnConstraint>,
 }
 
 impl Column {
-    pub fn new(id: ColumnId, name: impl Into<String>, sql_type: SqlType) -> Self {
+    pub fn new(id: ColumnId, name: impl Into<String>, sql_type: DataType) -> Self {
         Self {
             id,
             name: name.into(),
@@ -23,7 +23,7 @@ impl Column {
     pub fn with_constraints(
         id: ColumnId,
         name: impl Into<String>,
-        sql_type: SqlType,
+        sql_type: DataType,
         constraints: Vec<ColumnConstraint>,
     ) -> Self {
         Self {
@@ -63,7 +63,7 @@ impl Column {
     }
 
     /// Mengambil nilai default jika ada
-    pub fn default_value(&self) -> Option<&SqlValue> {
+    pub fn default_value(&self) -> Option<&ValueType> {
         self.constraints.iter().find_map(|c| match c {
             ColumnConstraint::Default(val) => Some(val),
             _ => None,

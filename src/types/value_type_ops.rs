@@ -1,16 +1,16 @@
 use ordered_float::OrderedFloat;
 use regex::Regex;
 
-use crate::{DomainError, SqlBool, SqlValue};
+use crate::{DomainError, SqlBool, ValueType};
 
-impl SqlValue {
+impl ValueType {
     /// Helper internal zero-copy mengekstraksi string reference
     #[inline]
     pub fn as_str(&self) -> Option<&str> {
         match self {
-            SqlValue::Text(s) => Some(s),
-            SqlValue::Enum { value, .. } => Some(value),
-            SqlValue::Custom { value, .. } => Some(value),
+            ValueType::Text(s) => Some(s),
+            ValueType::Enum { value, .. } => Some(value),
+            ValueType::Custom { value, .. } => Some(value),
             _ => None,
         }
     }
@@ -56,18 +56,18 @@ impl SqlValue {
     // =========================================================================
 
     #[inline]
-    pub fn add(&self, other: &Self) -> Result<SqlValue, DomainError> {
+    pub fn add(&self, other: &Self) -> Result<ValueType, DomainError> {
         if self.is_null() || other.is_null() {
-            return Ok(SqlValue::Null);
+            return Ok(ValueType::Null);
         }
 
         match (self, other) {
-            (SqlValue::Int(a), SqlValue::Int(b)) => Ok(SqlValue::Int(a + b)),
-            (SqlValue::Float(a), SqlValue::Float(b)) => Ok(SqlValue::Float(a + b)),
-            (SqlValue::Int(a), SqlValue::Float(b)) => {
-                Ok(SqlValue::Float(OrderedFloat(*a as f64) + b))
+            (ValueType::Int(a), ValueType::Int(b)) => Ok(ValueType::Int(a + b)),
+            (ValueType::Float(a), ValueType::Float(b)) => Ok(ValueType::Float(a + b)),
+            (ValueType::Int(a), ValueType::Float(b)) => {
+                Ok(ValueType::Float(OrderedFloat(*a as f64) + b))
             }
-            (SqlValue::Float(a), SqlValue::Int(b)) => Ok(SqlValue::Float(a + *b as f64)),
+            (ValueType::Float(a), ValueType::Int(b)) => Ok(ValueType::Float(a + *b as f64)),
             _ => Err(DomainError::eval_error(
                 "Tipe data tidak valid untuk operasi penjumlahan",
             )),
@@ -75,18 +75,18 @@ impl SqlValue {
     }
 
     #[inline]
-    pub fn sub(&self, other: &Self) -> Result<SqlValue, DomainError> {
+    pub fn sub(&self, other: &Self) -> Result<ValueType, DomainError> {
         if self.is_null() || other.is_null() {
-            return Ok(SqlValue::Null);
+            return Ok(ValueType::Null);
         }
 
         match (self, other) {
-            (SqlValue::Int(a), SqlValue::Int(b)) => Ok(SqlValue::Int(a - b)),
-            (SqlValue::Float(a), SqlValue::Float(b)) => Ok(SqlValue::Float(a - b)),
-            (SqlValue::Int(a), SqlValue::Float(b)) => {
-                Ok(SqlValue::Float(OrderedFloat(*a as f64) - b))
+            (ValueType::Int(a), ValueType::Int(b)) => Ok(ValueType::Int(a - b)),
+            (ValueType::Float(a), ValueType::Float(b)) => Ok(ValueType::Float(a - b)),
+            (ValueType::Int(a), ValueType::Float(b)) => {
+                Ok(ValueType::Float(OrderedFloat(*a as f64) - b))
             }
-            (SqlValue::Float(a), SqlValue::Int(b)) => Ok(SqlValue::Float(a - *b as f64)),
+            (ValueType::Float(a), ValueType::Int(b)) => Ok(ValueType::Float(a - *b as f64)),
             _ => Err(DomainError::eval_error(
                 "Tipe data tidak valid untuk operasi pengurangan",
             )),
@@ -94,18 +94,18 @@ impl SqlValue {
     }
 
     #[inline]
-    pub fn mul(&self, other: &Self) -> Result<SqlValue, DomainError> {
+    pub fn mul(&self, other: &Self) -> Result<ValueType, DomainError> {
         if self.is_null() || other.is_null() {
-            return Ok(SqlValue::Null);
+            return Ok(ValueType::Null);
         }
 
         match (self, other) {
-            (SqlValue::Int(a), SqlValue::Int(b)) => Ok(SqlValue::Int(a * b)),
-            (SqlValue::Float(a), SqlValue::Float(b)) => Ok(SqlValue::Float(a * b)),
-            (SqlValue::Int(a), SqlValue::Float(b)) => {
-                Ok(SqlValue::Float(OrderedFloat(*a as f64) * b))
+            (ValueType::Int(a), ValueType::Int(b)) => Ok(ValueType::Int(a * b)),
+            (ValueType::Float(a), ValueType::Float(b)) => Ok(ValueType::Float(a * b)),
+            (ValueType::Int(a), ValueType::Float(b)) => {
+                Ok(ValueType::Float(OrderedFloat(*a as f64) * b))
             }
-            (SqlValue::Float(a), SqlValue::Int(b)) => Ok(SqlValue::Float(a * *b as f64)),
+            (ValueType::Float(a), ValueType::Int(b)) => Ok(ValueType::Float(a * *b as f64)),
             _ => Err(DomainError::eval_error(
                 "Tipe data tidak valid untuk operasi perkalian",
             )),
@@ -113,18 +113,18 @@ impl SqlValue {
     }
 
     #[inline]
-    pub fn div(&self, other: &Self) -> Result<SqlValue, DomainError> {
+    pub fn div(&self, other: &Self) -> Result<ValueType, DomainError> {
         if self.is_null() || other.is_null() {
-            return Ok(SqlValue::Null);
+            return Ok(ValueType::Null);
         }
 
         match other {
-            SqlValue::Int(0) => {
+            ValueType::Int(0) => {
                 return Err(DomainError::eval_error(
                     "Pembagian dengan nol (Division by zero)",
                 ));
             }
-            SqlValue::Float(f) if f.into_inner() == 0.0 => {
+            ValueType::Float(f) if f.into_inner() == 0.0 => {
                 return Err(DomainError::eval_error(
                     "Pembagian dengan nol (Division by zero)",
                 ));
@@ -133,12 +133,12 @@ impl SqlValue {
         }
 
         match (self, other) {
-            (SqlValue::Int(a), SqlValue::Int(b)) => Ok(SqlValue::Int(a / b)),
-            (SqlValue::Float(a), SqlValue::Float(b)) => Ok(SqlValue::Float(a / b)),
-            (SqlValue::Int(a), SqlValue::Float(b)) => {
-                Ok(SqlValue::Float(OrderedFloat(*a as f64) / b))
+            (ValueType::Int(a), ValueType::Int(b)) => Ok(ValueType::Int(a / b)),
+            (ValueType::Float(a), ValueType::Float(b)) => Ok(ValueType::Float(a / b)),
+            (ValueType::Int(a), ValueType::Float(b)) => {
+                Ok(ValueType::Float(OrderedFloat(*a as f64) / b))
             }
-            (SqlValue::Float(a), SqlValue::Int(b)) => Ok(SqlValue::Float(a / *b as f64)),
+            (ValueType::Float(a), ValueType::Int(b)) => Ok(ValueType::Float(a / *b as f64)),
             _ => Err(DomainError::eval_error(
                 "Tipe data tidak valid untuk operasi pembagian",
             )),

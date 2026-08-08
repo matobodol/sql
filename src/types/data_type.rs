@@ -2,13 +2,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::ops::Not;
 
-use crate::{DomainError, SqlValue};
+use crate::{DomainError, ValueType};
 
 /// Representasi Skema Tipe Data SQL
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum SqlType {
+pub enum DataType {
     Int,
     Float,
     Text,
@@ -21,10 +21,10 @@ pub enum SqlType {
     Custom(String),
 }
 
-impl SqlType {
+impl DataType {
     /// Memvalidasi definisi SqlType, memastikan tidak ada varian Enum yang duplikat
     pub fn validate_enum_variants(&self) -> Result<(), DomainError> {
-        if let SqlType::Enum { name, variants } = self {
+        if let DataType::Enum { name, variants } = self {
             let mut seen = HashSet::with_capacity(variants.len());
 
             for variant in variants {
@@ -95,13 +95,13 @@ impl From<bool> for SqlBool {
     }
 }
 
-impl TryFrom<&SqlValue> for SqlBool {
+impl TryFrom<&ValueType> for SqlBool {
     type Error = DomainError;
 
-    fn try_from(value: &SqlValue) -> Result<Self, Self::Error> {
+    fn try_from(value: &ValueType) -> Result<Self, Self::Error> {
         match value {
-            SqlValue::Bool(b) => Ok(SqlBool::from(*b)),
-            SqlValue::Null => Ok(SqlBool::Unknown),
+            ValueType::Bool(b) => Ok(SqlBool::from(*b)),
+            ValueType::Null => Ok(SqlBool::Unknown),
             other => Err(DomainError::eval_error(format!(
                 "Operasi logika membutuhkan tipe BOOLEAN, tetapi mendapatkan {:?}",
                 other
@@ -110,11 +110,11 @@ impl TryFrom<&SqlValue> for SqlBool {
     }
 }
 
-impl TryFrom<SqlValue> for SqlBool {
+impl TryFrom<ValueType> for SqlBool {
     type Error = DomainError;
 
     #[inline]
-    fn try_from(value: SqlValue) -> Result<Self, Self::Error> {
+    fn try_from(value: ValueType) -> Result<Self, Self::Error> {
         SqlBool::try_from(&value)
     }
 }

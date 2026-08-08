@@ -1,10 +1,10 @@
 use super::binary_op::BinaryOp;
-use crate::SqlValue;
+use crate::ValueType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Expr {
-    Literal(SqlValue),
+    Literal(ValueType),
     /// Digunakan saat Parsing (AST Nama Kolom)
     Column(String),
     /// Digunakan saat Execution (Indeks Offset Kolom O(1))
@@ -43,7 +43,7 @@ impl Expr {
         Expr::ColumnIndex(idx)
     }
 
-    pub fn lit(val: impl Into<SqlValue>) -> Self {
+    pub fn lit(val: impl Into<ValueType>) -> Self {
         Expr::Literal(val.into())
     }
 

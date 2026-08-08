@@ -1,4 +1,4 @@
-use crate::{Row, RowId, SqlValue};
+use crate::{Row, RowId, ValueType};
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -25,7 +25,7 @@ impl RowStore {
     }
 
     /// Menambahkan kolom baru ke seluruh baris yang ada secara in-place.
-    pub fn add_column_to_rows(&mut self, target_idx: usize, default_value: SqlValue) {
+    pub fn add_column_to_rows(&mut self, target_idx: usize, default_value: ValueType) {
         let vec = Arc::make_mut(&mut self.rows);
         for row in vec.iter_mut() {
             let _ = row.insert(target_idx, default_value.clone());
@@ -39,7 +39,7 @@ impl RowStore {
     }
 
     /// Menyisipkan sekumpulan baris baru dan mengembalikan jumlah baris yang berhasil dimasukkan.
-    pub fn insert_rows(&mut self, new_rows: Vec<Vec<SqlValue>>) -> usize {
+    pub fn insert_rows(&mut self, new_rows: Vec<Vec<ValueType>>) -> usize {
         let count = new_rows.len();
         if count == 0 {
             return 0;

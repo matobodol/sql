@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use coredb::{CommandAction, Database, SqlType, command::TableAction};
+    use coredb::{CommandAction, DataType, Database, command::TableAction};
 
     /// Fungsi helper untuk inisialisasi database kosong[span_2](start_span)[span_2](end_span)
     fn setup_empty_db() -> Database {
@@ -14,8 +14,8 @@ mod tests {
             actions: vec![TableAction::CreateTable {
                 name: "users".to_string(),
                 columns: vec![
-                    ("id".to_string(), SqlType::Int, vec![]),
-                    ("name".to_string(), SqlType::Text, vec![]),
+                    ("id".to_string(), DataType::Int, vec![]),
+                    ("name".to_string(), DataType::Text, vec![]),
                 ],
             }],
         };
@@ -37,8 +37,8 @@ mod tests {
             actions: vec![TableAction::CreateTable {
                 name: "users".to_string(),
                 columns: vec![
-                    ("id".to_string(), SqlType::Int, vec![]),
-                    ("name".to_string(), SqlType::Text, vec![]),
+                    ("id".to_string(), DataType::Int, vec![]),
+                    ("name".to_string(), DataType::Text, vec![]),
                 ],
             }],
         };

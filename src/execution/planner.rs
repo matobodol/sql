@@ -7,8 +7,8 @@ use crate::execution::{
 };
 use crate::query_logic::dml_action::try_index_scan;
 use crate::{
-    AggregateFunc, Column, ColumnId, DomainError, Expr, OrderByExpr, Schema, SqlType, SqlValue,
-    TableStorage,
+    AggregateFunc, Column, ColumnId, DataType, DomainError, Expr, OrderByExpr, Schema,
+    TableStorage, ValueType,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -130,7 +130,11 @@ fn build_aggregate_schema(
             AggregateFunc::Max(_) => format!("max_{i}"),
         };
 
-        cols.push(Column::new(ColumnId(9900 + i as u32), name, SqlType::Float));
+        cols.push(Column::new(
+            ColumnId(9900 + i as u32),
+            name,
+            DataType::Float,
+        ));
     }
 
     Schema::new(cols)
@@ -152,24 +156,24 @@ fn build_projection_schema(
             }
             Expr::Literal(val) => {
                 let t = match val {
-                    SqlValue::Null => SqlType::Int,
-                    SqlValue::Int(_) => SqlType::Int,
-                    SqlValue::Float(_) => SqlType::Float,
-                    SqlValue::Text(_) => SqlType::Text,
-                    SqlValue::Bool(_) => SqlType::Bool,
-                    SqlValue::Bytes(_) => SqlType::Bytes,
-                    SqlValue::Timestamp(_) => SqlType::Timestamp,
-                    SqlValue::Date(_) => SqlType::Date,
-                    SqlValue::Time(_) => SqlType::Time,
-                    SqlValue::Enum { type_name, .. } => SqlType::Enum {
+                    ValueType::Null => DataType::Int,
+                    ValueType::Int(_) => DataType::Int,
+                    ValueType::Float(_) => DataType::Float,
+                    ValueType::Text(_) => DataType::Text,
+                    ValueType::Bool(_) => DataType::Bool,
+                    ValueType::Bytes(_) => DataType::Bytes,
+                    ValueType::Timestamp(_) => DataType::Timestamp,
+                    ValueType::Date(_) => DataType::Date,
+                    ValueType::Time(_) => DataType::Time,
+                    ValueType::Enum { type_name, .. } => DataType::Enum {
                         name: type_name.to_string(),
                         variants: vec![],
                     },
-                    SqlValue::Custom { type_name, .. } => SqlType::Custom(type_name.to_string()),
+                    ValueType::Custom { type_name, .. } => DataType::Custom(type_name.to_string()),
                 };
                 (format!("col_{i}"), t)
             }
-            _ => (format!("col_{i}"), SqlType::Text),
+            _ => (format!("col_{i}"), DataType::Text),
         };
 
         cols.push(Column::new(ColumnId(8800 + i as u32), col_name, col_type));

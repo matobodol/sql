@@ -1,9 +1,9 @@
 use super::{binary_op::BinaryOp, expr::Expr};
-use crate::{DomainError, Row, SqlBool, SqlValue};
+use crate::{DomainError, Row, SqlBool, ValueType};
 use std::borrow::Cow;
 
 /// Evaluasi ekspresi berbasis Zero-Copy (mengembalikan Cow<&SqlValue>) dan Instant O(1) Access
-pub fn eval_expr<'a>(expr: &'a Expr, row: &'a Row) -> Result<Cow<'a, SqlValue>, DomainError> {
+pub fn eval_expr<'a>(expr: &'a Expr, row: &'a Row) -> Result<Cow<'a, ValueType>, DomainError> {
     match expr {
         // Zero-copy: Langsung borrow referensi Literal dari AST
         Expr::Literal(val) => Ok(Cow::Borrowed(val)),
@@ -25,17 +25,17 @@ pub fn eval_expr<'a>(expr: &'a Expr, row: &'a Row) -> Result<Cow<'a, SqlValue>, 
         Expr::Not(inner) => {
             let val = eval_expr(inner, row)?;
             let sql_bool = SqlBool::try_from(val.as_ref())?;
-            Ok(Cow::Owned(SqlValue::from(!sql_bool)))
+            Ok(Cow::Owned(ValueType::from(!sql_bool)))
         }
 
         Expr::IsNull(inner) => {
             let val = eval_expr(inner, row)?;
-            Ok(Cow::Owned(SqlValue::Bool(val.is_null())))
+            Ok(Cow::Owned(ValueType::Bool(val.is_null())))
         }
 
         Expr::IsNotNull(inner) => {
             let val = eval_expr(inner, row)?;
-            Ok(Cow::Owned(SqlValue::Bool(!val.is_null())))
+            Ok(Cow::Owned(ValueType::Bool(!val.is_null())))
         }
 
         // --- List Operations (IN) dengan 3VL ---
@@ -43,7 +43,7 @@ pub fn eval_expr<'a>(expr: &'a Expr, row: &'a Row) -> Result<Cow<'a, SqlValue>, 
             let target_val = eval_expr(expr, row)?;
 
             if target_val.is_null() {
-                return Ok(Cow::Owned(SqlValue::Null));
+                return Ok(Cow::Owned(ValueType::Null));
             }
 
             let mut has_unknown = false;
@@ -53,16 +53,16 @@ pub fn eval_expr<'a>(expr: &'a Expr, row: &'a Row) -> Result<Cow<'a, SqlValue>, 
 
                 // Memastikan passing &SqlValue ke .eq()
                 match target_val.as_ref().eq(item_val.as_ref()) {
-                    SqlBool::True => return Ok(Cow::Owned(SqlValue::Bool(true))),
+                    SqlBool::True => return Ok(Cow::Owned(ValueType::Bool(true))),
                     SqlBool::Unknown => has_unknown = true,
                     SqlBool::False => {}
                 }
             }
 
             if has_unknown {
-                Ok(Cow::Owned(SqlValue::Null))
+                Ok(Cow::Owned(ValueType::Null))
             } else {
-                Ok(Cow::Owned(SqlValue::Bool(false)))
+                Ok(Cow::Owned(ValueType::Bool(false)))
             }
         }
 
@@ -77,23 +77,23 @@ pub fn eval_expr<'a>(expr: &'a Expr, row: &'a Row) -> Result<Cow<'a, SqlValue>, 
 }
 
 fn eval_binary_op(
-    left: &SqlValue,
+    left: &ValueType,
     op: BinaryOp,
-    right: &SqlValue,
-) -> Result<SqlValue, DomainError> {
+    right: &ValueType,
+) -> Result<ValueType, DomainError> {
     match op {
         // --- Perbandingan (3VL Domain SSOT) ---
-        BinaryOp::Eq => Ok(SqlValue::from(left.eq(right))),
-        BinaryOp::NotEq => Ok(SqlValue::from(left.noteq(right))),
-        BinaryOp::Gt => Ok(SqlValue::from(left.gt(right))),
-        BinaryOp::Lt => Ok(SqlValue::from(left.lt(right))),
-        BinaryOp::GtEq => Ok(SqlValue::from(left.gteq(right))),
-        BinaryOp::LtEq => Ok(SqlValue::from(left.lteq(right))),
-        BinaryOp::Like => Ok(SqlValue::from(left.like(right)?)),
+        BinaryOp::Eq => Ok(ValueType::from(left.eq(right))),
+        BinaryOp::NotEq => Ok(ValueType::from(left.noteq(right))),
+        BinaryOp::Gt => Ok(ValueType::from(left.gt(right))),
+        BinaryOp::Lt => Ok(ValueType::from(left.lt(right))),
+        BinaryOp::GtEq => Ok(ValueType::from(left.gteq(right))),
+        BinaryOp::LtEq => Ok(ValueType::from(left.lteq(right))),
+        BinaryOp::Like => Ok(ValueType::from(left.like(right)?)),
 
         // --- Logika (3VL Domain SSOT) ---
-        BinaryOp::And => Ok(SqlValue::from(left.and(right)?)),
-        BinaryOp::Or => Ok(SqlValue::from(left.or(right)?)),
+        BinaryOp::And => Ok(ValueType::from(left.and(right)?)),
+        BinaryOp::Or => Ok(ValueType::from(left.or(right)?)),
 
         // --- Aritmatika (Domain SSOT) ---
         BinaryOp::Add => left.add(right),

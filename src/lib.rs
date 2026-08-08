@@ -21,4 +21,4 @@ pub use expression::{BinaryOp, Expr};
 pub use query_logic::*;
 pub use schema::{AutoIncrement, Column, ColumnConstraint, Schema, TableConstraint};
 pub use storage::{Row, RowStore, StorageEngine, TableStorage};
-pub use types::{SqlBool, SqlType, SqlValue};
+pub use types::{DataType, SqlBool, ValueType};

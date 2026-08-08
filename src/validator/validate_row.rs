@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use crate::{DomainError, Row, RowId, Schema, SqlValue, expression::eval_expr};
+use crate::{DomainError, Row, RowId, Schema, ValueType, expression::eval_expr};
 
-pub(crate) fn validate_row(schema: &Schema, values: &[SqlValue]) -> Result<(), DomainError> {
+pub(crate) fn validate_row(schema: &Schema, values: &[ValueType]) -> Result<(), DomainError> {
     if values.len() != schema.columns().len() {
         return Err(DomainError::eval_error(format!(
             "Jumlah kolom tidak sesuai: mengharapkan {}, ditemukan {}",
@@ -36,7 +36,7 @@ pub(crate) fn validate_row(schema: &Schema, values: &[SqlValue]) -> Result<(), D
 
     for (col_idx, bound_expr) in schema.bound_column_checks() {
         let res = eval_expr(bound_expr, &temp_row)?;
-        if !res.is_null() && res.as_ref() == &SqlValue::Bool(false) {
+        if !res.is_null() && res.as_ref() == &ValueType::Bool(false) {
             return Err(DomainError::eval_error(format!(
                 "Pelanggaran CHECK constraint pada kolom '{}'",
                 schema.columns()[*col_idx].name
@@ -46,7 +46,7 @@ pub(crate) fn validate_row(schema: &Schema, values: &[SqlValue]) -> Result<(), D
 
     for bound_expr in schema.bound_table_checks() {
         let res = eval_expr(bound_expr, &temp_row)?;
-        if !res.is_null() && res.as_ref() == &SqlValue::Bool(false) {
+        if !res.is_null() && res.as_ref() == &ValueType::Bool(false) {
             return Err(DomainError::eval_error(
                 "Pelanggaran CHECK constraint pada tabel",
             ));

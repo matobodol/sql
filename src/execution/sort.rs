@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::vec::IntoIter;
 
 use super::operator::PhysicalOperator;
-use crate::{DomainError, Expr, Row, Schema, SqlValue, expression::eval_expr};
+use crate::{DomainError, Expr, Row, Schema, ValueType, expression::eval_expr};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SortOrder {
@@ -46,7 +46,7 @@ impl SortOperator {
         }
 
         // 1. Kumpulkan seluruh baris data & ekstrak sort keys satu kali per baris
-        let mut annotated_rows: Vec<(Vec<SqlValue>, Row)> = Vec::new();
+        let mut annotated_rows: Vec<(Vec<ValueType>, Row)> = Vec::new();
 
         while let Some(row) = self.input.next()? {
             let mut keys = Vec::with_capacity(bound_specs.len());

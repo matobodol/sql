@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{AutoIncrement, Expr, SqlValue};
+use crate::{AutoIncrement, Expr, ValueType};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ColumnConstraint {
@@ -11,7 +11,7 @@ pub enum ColumnConstraint {
     /// Menandakan kolom sebagai Primary Key
     PrimaryKey,
     /// Nilai bawaan jika saat INSERT nilai tidak disediakan
-    Default(SqlValue),
+    Default(ValueType),
     /// Pengecekan ekspresi tingkat kolom (misal: length(username) > 3)
     Check(Expr),
     /// Generator nilai otomatis (misal: ID 1, 2, 3, dst.)

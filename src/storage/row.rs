@@ -1,17 +1,17 @@
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, Index};
 
-use crate::{DomainError, RowId, SqlValue};
+use crate::{DomainError, RowId, ValueType};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Row {
     id: RowId,
-    values: Vec<SqlValue>,
+    values: Vec<ValueType>,
 }
 
 impl Row {
     #[inline]
-    pub fn with_id(id: RowId, values: Vec<SqlValue>) -> Self {
+    pub fn with_id(id: RowId, values: Vec<ValueType>) -> Self {
         Self { id, values }
     }
 
@@ -25,25 +25,25 @@ impl Row {
     }
 
     #[inline]
-    pub fn values(&self) -> &[SqlValue] {
+    pub fn values(&self) -> &[ValueType] {
         &self.values
     }
 
     #[inline]
-    pub fn get_by_index(&self, index: usize) -> Option<&SqlValue> {
+    pub fn get_by_index(&self, index: usize) -> Option<&ValueType> {
         self.values.get(index)
     }
 
-    pub fn into_values(self) -> Vec<SqlValue> {
+    pub fn into_values(self) -> Vec<ValueType> {
         self.values
     }
 
-    pub fn into_parts(self) -> (RowId, Vec<SqlValue>) {
+    pub fn into_parts(self) -> (RowId, Vec<ValueType>) {
         (self.id, self.values)
     }
 
     /// Menyisipkan nilai ke indeks tertentu dengan validasi batas yang ketat.
-    pub(crate) fn insert(&mut self, index: usize, value: SqlValue) -> Result<(), DomainError> {
+    pub(crate) fn insert(&mut self, index: usize, value: ValueType) -> Result<(), DomainError> {
         if index > self.values.len() {
             return Err(DomainError::eval_error(format!(
                 "Indeks kolom di luar batas: {index} (panjang row: {})",
@@ -65,14 +65,14 @@ impl Row {
     }
 }
 
-impl From<(RowId, Vec<SqlValue>)> for Row {
-    fn from((id, values): (RowId, Vec<SqlValue>)) -> Self {
+impl From<(RowId, Vec<ValueType>)> for Row {
+    fn from((id, values): (RowId, Vec<ValueType>)) -> Self {
         Self::with_id(id, values)
     }
 }
 
 impl Index<usize> for Row {
-    type Output = SqlValue;
+    type Output = ValueType;
 
     #[inline]
     fn index(&self, index: usize) -> &Self::Output {
@@ -81,7 +81,7 @@ impl Index<usize> for Row {
 }
 
 impl Deref for Row {
-    type Target = [SqlValue];
+    type Target = [ValueType];
 
     #[inline]
     fn deref(&self) -> &Self::Target {

@@ -4,7 +4,7 @@ use crate::catalog::CatalogStore;
 use crate::command::QueryResult;
 use crate::execution::PhysicalPlanner;
 use crate::{
-    Column, ColumnId, Database, DomainError, Row, RowId, Schema, SelectStmt, SqlType, SqlValue,
+    Column, ColumnId, DataType, Database, DomainError, Row, RowId, Schema, SelectStmt, ValueType,
 };
 
 pub(crate) fn execute_select(
@@ -44,7 +44,7 @@ pub(crate) fn execute_select(
 }
 
 pub(crate) fn execute_show_tables(catalog: &CatalogStore) -> Result<QueryResult, DomainError> {
-    let col_def = Column::new(ColumnId(1), "table_name", SqlType::Text);
+    let col_def = Column::new(ColumnId(1), "table_name", DataType::Text);
     let schema = Schema::new(vec![col_def])?;
 
     let table_names = catalog.list_tables();
@@ -52,7 +52,7 @@ pub(crate) fn execute_show_tables(catalog: &CatalogStore) -> Result<QueryResult,
 
     for (idx, name) in table_names.into_iter().enumerate() {
         let row_id = RowId((idx + 1) as u64);
-        let values = vec![SqlValue::Text(Arc::from(name))];
+        let values = vec![ValueType::Text(Arc::from(name))];
         rows.push(Row::with_id(row_id, values));
     }
 

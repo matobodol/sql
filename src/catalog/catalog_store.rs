@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::{
-    Column, ColumnConstraint, ColumnId, DomainError, Schema, SqlType, TableId,
+    Column, ColumnConstraint, ColumnId, DataType, DomainError, Schema, TableId,
     catalog::id::IdGenerator,
 };
 
@@ -66,7 +66,7 @@ impl CatalogStore {
         &mut self,
         table_id: TableId,
         name: &str,
-        sql_type: SqlType,
+        sql_type: DataType,
         constraints: Vec<ColumnConstraint>,
     ) -> Result<ColumnId, DomainError> {
         if let Some(col_id) = self.get_column_id(table_id, name) {
@@ -108,7 +108,7 @@ impl CatalogStore {
         &mut self,
         table_id: TableId,
         name: &str,
-        sql_type: SqlType,
+        sql_type: DataType,
         constraints: Vec<ColumnConstraint>,
         index: usize,
     ) -> Result<ColumnId, DomainError> {

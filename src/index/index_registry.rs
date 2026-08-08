@@ -1,6 +1,6 @@
 use super::btree::BTreeIndex;
 use super::traits::Index;
-use crate::{ColumnId, DomainError, RowId, SqlValue};
+use crate::{ColumnId, DomainError, RowId, ValueType};
 use std::collections::HashMap;
 
 /// Registry terpusat yang mengelola seluruh indeks B-Tree pada kolom-kolom tabel.
@@ -63,7 +63,7 @@ impl IndexRegistry {
     pub fn insert_entry_ref(
         &mut self,
         row_id: RowId,
-        entries: &[(ColumnId, &SqlValue)],
+        entries: &[(ColumnId, &ValueType)],
     ) -> Result<(), DomainError> {
         let mut inserted_cols = Vec::with_capacity(entries.len());
 
@@ -89,7 +89,7 @@ impl IndexRegistry {
     pub fn remove_entry_ref(
         &mut self,
         row_id: RowId,
-        entries: &[(ColumnId, &SqlValue)],
+        entries: &[(ColumnId, &ValueType)],
     ) -> Result<(), DomainError> {
         for &(col_id, val) in entries {
             if let Some(index) = self.indexes.get_mut(&col_id) {
