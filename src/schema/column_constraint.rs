@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::expr::Expr;
-use crate::{AutoIncrement, SqlValue};
+use crate::{AutoIncrement, Expr, SqlValue};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ColumnConstraint {

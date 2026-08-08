@@ -6,9 +6,7 @@ use std::sync::Arc;
 use std::vec::IntoIter;
 
 use super::operator::PhysicalOperator;
-use crate::eval_expr;
-use crate::expr::Expr;
-use crate::{DomainError, Row, Schema, SqlValue};
+use crate::{DomainError, Expr, Row, Schema, SqlValue, expression::eval_expr};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SortOrder {

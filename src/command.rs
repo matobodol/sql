@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::{
-    ColumnConstraint, ColumnId, Database, DomainError, Expr, Row, Schema, SqlType, SqlValue,
-    TableId, TableStorage,
+    ColumnConstraint, ColumnId, Database, DomainError, Expr, Row, Schema, SelectStmt, SqlType,
+    SqlValue, TableId, TableStorage,
     catalog::CatalogStore,
     ddl_action::{
         apply_add_columns, apply_add_constraint, apply_create_table, apply_drop_column,
@@ -11,7 +11,6 @@ use crate::{
     },
     dml_action::{handle_delete, handle_insert, handle_update},
     dql_action::{execute_select, execute_show_tables},
-    planner::SelectStmt,
     validator::{validate_alter_table, validate_table_action},
 };
 

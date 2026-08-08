@@ -2,11 +2,11 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Bound;
 use std::sync::Arc;
 
-use crate::table_store::TableStorage;
+use crate::TableStorage;
+use crate::expression::{eval_expr, eval_where};
 use crate::validator::validate_row;
 use crate::{
     AutoIncrement, BinaryOp, ColumnId, Database, DomainError, Expr, RowId, Schema, SqlValue,
-    eval_expr, eval_where,
 };
 
 struct StagedUpdate {

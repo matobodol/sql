@@ -1,9 +1,9 @@
 pub mod catalog;
-pub mod command; // Rename dari coredb_command
+pub mod command;
 pub mod database;
 pub mod error;
 pub mod execution;
-pub mod expression; // Rename dari expresi
+pub mod expression;
 pub mod index;
 pub mod query_logic;
 pub mod schema;
@@ -16,10 +16,9 @@ pub use catalog::id::{ColumnId, RowId, TableId};
 pub use command::{ColumnPosition, CommandAction, DdlAction, QueryResult, TableAction};
 pub use database::Database;
 pub use error::DomainError;
-pub use execution::*;
-pub use expression::*;
-pub use index::*;
+pub use execution::{AggregateFunc, OrderByExpr, SelectStmt, SortOrder};
+pub use expression::{BinaryOp, Expr};
 pub use query_logic::*;
-pub use schema::*;
-pub use storage::*;
-pub use types::*;
+pub use schema::{AutoIncrement, Column, ColumnConstraint, Schema, TableConstraint};
+pub use storage::{Row, RowStore, StorageEngine, TableStorage};
+pub use types::{SqlBool, SqlType, SqlValue};

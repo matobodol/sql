@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use crate::execution::operator::PhysicalOperator;
 use crate::execution::{
-    AggregateOperator, FilterOperator, LimitOperator, ProjectionOperator, SeqScanOperator,
-    SortOperator,
+    AggregateOperator, FilterOperator, IndexScanOperator, LimitOperator, ProjectionOperator,
+    SeqScanOperator, SortOperator,
 };
 use crate::query_logic::dml_action::try_index_scan;
 use crate::{
-    AggregateFunc, Column, ColumnId, DomainError, Expr, IndexScanOperator, OrderByExpr, Schema,
-    SqlType, SqlValue, TableStorage,
+    AggregateFunc, Column, ColumnId, DomainError, Expr, OrderByExpr, Schema, SqlType, SqlValue,
+    TableStorage,
 };
 
 #[derive(Debug, Clone, PartialEq)]

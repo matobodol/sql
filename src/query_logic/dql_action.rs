@@ -2,8 +2,10 @@ use std::sync::Arc;
 
 use crate::catalog::CatalogStore;
 use crate::command::QueryResult;
-use crate::planner::{PhysicalPlanner, SelectStmt};
-use crate::{Column, ColumnId, Database, DomainError, Row, RowId, Schema, SqlType, SqlValue};
+use crate::execution::PhysicalPlanner;
+use crate::{
+    Column, ColumnId, Database, DomainError, Row, RowId, Schema, SelectStmt, SqlType, SqlValue,
+};
 
 pub(crate) fn execute_select(
     db: &Database,

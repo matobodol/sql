@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{DomainError, Row, RowId, Schema, SqlValue, eval_expr};
+use crate::{DomainError, Row, RowId, Schema, SqlValue, expression::eval_expr};
 
 pub(crate) fn validate_row(schema: &Schema, values: &[SqlValue]) -> Result<(), DomainError> {
     if values.len() != schema.columns().len() {

@@ -3,9 +3,7 @@
 use std::sync::Arc;
 
 use super::operator::PhysicalOperator;
-use crate::eval_expr;
-use crate::expr::Expr;
-use crate::{DomainError, Row, Schema};
+use crate::{DomainError, Expr, Row, Schema, expression::eval_expr};
 
 pub struct ProjectionOperator {
     input: Box<dyn PhysicalOperator>,

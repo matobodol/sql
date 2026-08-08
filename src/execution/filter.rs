@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use crate::eval_expr;
 use crate::execution::operator::PhysicalOperator;
+use crate::expression::eval_expr;
 use crate::{DomainError, Expr, Row, Schema, SqlBool};
 
 /// Physical operator yang bertugas memfilter baris data berdasarkan predikat ter-bind O(1).
