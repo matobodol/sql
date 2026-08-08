@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+use std::ops::Bound;
 use std::sync::Arc;
 
 use crate::id::{ColumnId, RowId};
@@ -5,8 +7,6 @@ use crate::table_store::TableStorage;
 use crate::{
     AutoIncrement, BinaryOp, Database, DomainError, Expr, Schema, SqlValue, eval_expr, eval_where,
 };
-use std::collections::{HashMap, HashSet};
-use std::ops::Bound;
 
 struct StagedUpdate {
     row_idx: usize,
@@ -30,16 +30,20 @@ pub(crate) fn handle_insert(
         .get_table_id(table_name)
         .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
 
-    let schema_cols = db
-        .catalog()
-        .get_schema_columns(table_id)
-        .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
-
-    let schema = Schema::new(schema_cols.to_vec())?;
-    let columns = schema.columns().to_vec();
+    // O(1) Zero-Allocation Fetch: Mengambil Arc<Schema> langsung dari CatalogStore
+    let schema = db.catalog().get_schema(table_id)?;
+    let columns = schema.columns();
     let total_rows = raw_rows.len();
 
     let table = db.get_table_storage_mut(table_name)?;
+
+    // Identifikasi kolom berindeks untuk penyaringan alokasi entri indeks secara selektif
+    let indexed_col_indices: Vec<(usize, ColumnId)> = columns
+        .iter()
+        .enumerate()
+        .filter(|(_, col)| table.index_registry().has_index(col.id))
+        .map(|(idx, col)| (idx, col.id))
+        .collect();
 
     struct StagedRow {
         assigned_row_id: RowId,
@@ -62,27 +66,14 @@ pub(crate) fn handle_insert(
             if col.is_auto_increment() && is_null {
                 let counter = staged_counters
                     .get_mut(&col.id)
-                    .expect("Counter auto-increment harusnya terinisialisasi");
+                    .expect("Counter auto-increment harus terinisialisasi");
 
                 row_values[i] = SqlValue::Int(*counter);
-
                 let step = match col.auto_increment_config() {
                     Some(AutoIncrement::Enabled { step, .. }) => *step,
                     _ => 1,
                 };
                 *counter += step;
-            } else if col.is_auto_increment() && !is_null {
-                if let SqlValue::Int(manual_val) = row_values[i] {
-                    if let Some(counter) = staged_counters.get_mut(&col.id) {
-                        if manual_val >= *counter {
-                            let step = match col.auto_increment_config() {
-                                Some(AutoIncrement::Enabled { step, .. }) => *step,
-                                _ => 1,
-                            };
-                            *counter = manual_val + step;
-                        }
-                    }
-                }
             } else if is_null {
                 if let Some(default_val) = col.default_value() {
                     row_values[i] = default_val.clone();
@@ -90,12 +81,12 @@ pub(crate) fn handle_insert(
             }
         }
 
+        // Memanggil validate_row yang sudah dioptimasi dengan Fast-Path CHECK constraint
         schema.validate_row(&row_values)?;
 
-        let index_entries: Vec<(ColumnId, SqlValue)> = columns
+        let index_entries: Vec<(ColumnId, SqlValue)> = indexed_col_indices
             .iter()
-            .enumerate()
-            .map(|(i, col)| (col.id, row_values[i].clone()))
+            .map(|&(c_idx, col_id)| (col_id, row_values[c_idx].clone()))
             .collect();
 
         let assigned_row_id = RowId::from(next_start_id + offset as u64);
@@ -107,6 +98,7 @@ pub(crate) fn handle_insert(
         });
     }
 
+    // Komit transaksional ke Indeks B-Tree
     for (offset, staged) in staged_rows.iter().enumerate() {
         let entries_ref: Vec<(ColumnId, &SqlValue)> = staged
             .index_entries
@@ -118,6 +110,7 @@ pub(crate) fn handle_insert(
             .index_registry_mut()
             .insert_entry_ref(staged.assigned_row_id, &entries_ref)
         {
+            // Rollback entri indeks jika terjadi kegagalan unik/kunci
             for rb_staged in staged_rows[..offset].iter() {
                 let rb_entries_ref: Vec<(ColumnId, &SqlValue)> = rb_staged
                     .index_entries
@@ -161,12 +154,19 @@ pub(crate) fn handle_delete(
         .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
 
     let schema = Schema::new(schema_cols.to_vec())?;
-    let columns = schema.columns().to_vec();
+    let columns = schema.columns();
 
     let table = db.get_table_storage_mut(table_name)?;
 
     let candidate_row_ids: Option<HashSet<RowId>> =
         try_index_scan(table, &schema, predicate).map(|ids| ids.into_iter().collect());
+
+    let indexed_col_indices: Vec<(usize, ColumnId)> = columns
+        .iter()
+        .enumerate()
+        .filter(|(_, col)| table.index_registry().has_index(col.id))
+        .map(|(idx, col)| (idx, col.id))
+        .collect();
 
     struct StagedDelete {
         row_idx: usize,
@@ -190,10 +190,9 @@ pub(crate) fn handle_delete(
 
         if matches_condition {
             let row_id = row.id();
-            let index_entries: Vec<(ColumnId, SqlValue)> = columns
+            let index_entries: Vec<(ColumnId, SqlValue)> = indexed_col_indices
                 .iter()
-                .enumerate()
-                .map(|(c_idx, col)| (col.id, row.values()[c_idx].clone()))
+                .map(|&(c_idx, col_id)| (col_id, row.values()[c_idx].clone()))
                 .collect();
 
             staged_deletes.push(StagedDelete {
@@ -237,7 +236,6 @@ pub(crate) fn handle_delete(
         removed_count += 1;
     }
 
-    // Mutasi In-Place Tanpa .to_vec()!
     let deleted_count = staged_deletes.len();
     let indices_to_delete: Vec<usize> = staged_deletes.into_iter().map(|s| s.row_idx).collect();
     table
@@ -268,12 +266,19 @@ pub(crate) fn handle_update(
         .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
 
     let schema = Schema::new(schema_cols.to_vec())?;
-    let columns = schema.columns().to_vec();
+    let columns = schema.columns();
 
     let table = db.get_table_storage_mut(table_name)?;
 
     let candidate_row_ids: Option<HashSet<RowId>> =
         try_index_scan(table, &schema, predicate).map(|ids| ids.into_iter().collect());
+
+    let indexed_col_indices: Vec<(usize, ColumnId)> = columns
+        .iter()
+        .enumerate()
+        .filter(|(_, col)| table.index_registry().has_index(col.id))
+        .map(|(idx, col)| (idx, col.id))
+        .collect();
 
     let mut staged_updates = Vec::new();
 
@@ -312,16 +317,14 @@ pub(crate) fn handle_update(
 
             schema.validate_row(&new_values)?;
 
-            let old_entries: Vec<(ColumnId, SqlValue)> = columns
+            let old_entries: Vec<(ColumnId, SqlValue)> = indexed_col_indices
                 .iter()
-                .enumerate()
-                .map(|(c_idx, col)| (col.id, row.values()[c_idx].clone()))
+                .map(|&(c_idx, col_id)| (col_id, row.values()[c_idx].clone()))
                 .collect();
 
-            let new_entries: Vec<(ColumnId, SqlValue)> = columns
+            let new_entries: Vec<(ColumnId, SqlValue)> = indexed_col_indices
                 .iter()
-                .enumerate()
-                .map(|(c_idx, col)| (col.id, new_values[c_idx].clone()))
+                .map(|&(c_idx, col_id)| (col_id, new_values[c_idx].clone()))
                 .collect();
 
             staged_updates.push(StagedUpdate {
@@ -375,7 +378,6 @@ pub(crate) fn handle_update(
         modified_count += 1;
     }
 
-    // Mutasi In-Place Tanpa .to_vec()!
     let updated_count = staged_updates.len();
     let updates: Vec<(usize, crate::Row)> = staged_updates
         .into_iter()
@@ -431,13 +433,13 @@ pub(crate) fn try_index_scan(
             if let (Expr::Column(col_name), Expr::Literal(val)) = (left.as_ref(), right.as_ref()) {
                 if let Some(col_id) = schema.get_column_by_name(col_name).map(|c| c.id) {
                     let index = table.index_registry().get_index(col_id)?;
-                    return Some(index.lookup(val));
+                    return Some(index.lookup(val).to_vec());
                 }
             }
             if let (Expr::Literal(val), Expr::Column(col_name)) = (left.as_ref(), right.as_ref()) {
                 if let Some(col_id) = schema.get_column_by_name(col_name).map(|c| c.id) {
                     let index = table.index_registry().get_index(col_id)?;
-                    return Some(index.lookup(val));
+                    return Some(index.lookup(val).to_vec());
                 }
             }
             None
@@ -481,7 +483,7 @@ pub(crate) fn try_index_scan(
 
                     for item in list {
                         if let Expr::Literal(val) = item {
-                            for row_id in index.lookup(val) {
+                            for &row_id in index.lookup(val) {
                                 matched_row_ids.insert(row_id);
                             }
                         } else {

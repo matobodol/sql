@@ -4,7 +4,6 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-storage = { path = "../storage" }
 
 chrono = { workspace = true }
 serde = { workspace = true }

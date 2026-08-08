@@ -1,70 +1,63 @@
-use crate::id::{ColumnId, TableId};
-use crate::index::IndexRegistry;
-use crate::{AutoIncrement, Column, ColumnConstraint, DomainError, RowStore, SqlValue};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-#[derive(Debug, Clone)]
+use crate::DomainError;
+use crate::id::{ColumnId, TableId};
+use crate::index::index_registry::IndexRegistry;
+use crate::schema::{AutoIncrement, Schema};
+use crate::storage::row_store::RowStore;
+
+#[derive(Debug)]
 pub struct TableStorage {
-    id: TableId,
+    table_id: TableId,
     name: String,
-    /// Penyimpanan baris terisolasi
+    schema: Arc<Schema>,
     row_store: RowStore,
-    /// Registry indeks B-Tree
     index_registry: IndexRegistry,
-    /// Counter auto-increment berbasis ColumnId
     auto_increment_counters: HashMap<ColumnId, i64>,
 }
 
 impl TableStorage {
-    /// Inisialisasi fisik tabel menggunakan Zero-Copy Arc metadata dari CatalogStore
-    pub fn new_with_arc(id: TableId, name: impl Into<String>, schema_cols: Arc<[Column]>) -> Self {
+    pub fn new(table_id: TableId, name: &str, schema: Arc<Schema>) -> Self {
         let mut auto_increment_counters = HashMap::new();
 
-        // Inisialisasi counter auto-increment langsung dari Arc slice
-        for col in schema_cols.iter() {
+        for col in schema.columns() {
             if let Some(AutoIncrement::Enabled { start, .. }) = col.auto_increment_config() {
                 auto_increment_counters.insert(col.id, *start);
             }
         }
 
-        let mut table = Self {
-            id,
-            name: name.into(),
+        Self {
+            table_id,
+            name: name.to_string(),
+            schema,
             row_store: RowStore::new(),
             index_registry: IndexRegistry::new(),
             auto_increment_counters,
-        };
-
-        table.build_indexes_from_schema(&schema_cols);
-        table
-    }
-
-    /// Membuat indeks unik awal dari slice metadata katalog
-    fn build_indexes_from_schema(&mut self, schema_cols: &[Column]) {
-        for col in schema_cols {
-            let is_unique = col.is_primary_key()
-                || col
-                    .constraints
-                    .iter()
-                    .any(|c| matches!(c, ColumnConstraint::Unique));
-
-            if is_unique {
-                let _ = self.index_registry.create_btree_index(col.id, true);
-            }
         }
     }
 
-    pub fn id(&self) -> TableId {
-        self.id
+    #[inline]
+    pub fn table_id(&self) -> TableId {
+        self.table_id
     }
 
+    #[inline]
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    pub fn set_name(&mut self, name: impl Into<String>) {
-        self.name = name.into();
+    pub fn set_name(&mut self, new_name: &str) {
+        self.name = new_name.to_string();
+    }
+
+    #[inline]
+    pub fn schema(&self) -> &Arc<Schema> {
+        &self.schema
+    }
+
+    pub fn update_schema(&mut self, new_schema: Arc<Schema>) {
+        self.schema = new_schema;
     }
 
     #[inline]
@@ -97,26 +90,19 @@ impl TableStorage {
         &mut self.auto_increment_counters
     }
 
-    /// Rekonstruksi ulang indeks B-Tree secara Zero-Copy tanpa mengkloning SqlValue
-    pub fn rebuild_indexes(&mut self, schema_cols: &[Column]) -> Result<(), DomainError> {
-        self.index_registry.clear_entries();
-
-        // Ambil pemetaan indeks kolom secara konstan O(1)
-        let col_ids: Vec<ColumnId> = schema_cols.iter().map(|c| c.id).collect();
-
+    pub fn rebuild_indexes(&mut self, schema: &Schema) -> Result<(), DomainError> {
+        self.index_registry.clear();
         for row in self.row_store.rows() {
-            let row_id = row.id();
-
-            // Mengirim pasangan borrow (&ColumnId, &SqlValue) tanpa .clone()
-            let entries: Vec<(ColumnId, &SqlValue)> = col_ids
+            let entries: Vec<(ColumnId, &crate::SqlValue)> = schema
+                .columns()
                 .iter()
-                .zip(row.values())
-                .map(|(&col_id, val)| (col_id, val))
+                .enumerate()
+                .filter(|(_, col)| self.index_registry.has_index(col.id))
+                .map(|(idx, col)| (col.id, &row.values()[idx]))
                 .collect();
 
-            self.index_registry.insert_entry_ref(row_id, &entries)?;
+            self.index_registry.insert_entry_ref(row.id(), &entries)?;
         }
-
         Ok(())
     }
 }

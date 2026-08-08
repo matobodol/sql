@@ -4,6 +4,7 @@ use crate::id::{ColumnId, RowId};
 use crate::{DomainError, SqlValue};
 use std::collections::HashMap;
 
+/// Registry terpusat yang mengelola seluruh indeks B-Tree pada kolom-kolom tabel.
 #[derive(Debug, Clone, Default)]
 pub struct IndexRegistry {
     indexes: HashMap<ColumnId, Box<dyn Index>>,
@@ -14,6 +15,18 @@ impl IndexRegistry {
         Self {
             indexes: HashMap::new(),
         }
+    }
+
+    /// Mengecek apakah registry tidak memiliki indeks sama sekali.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.indexes.is_empty()
+    }
+
+    /// Mengembalikan jumlah indeks aktif di dalam registry.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.indexes.len()
     }
 
     pub fn create_btree_index(
@@ -47,7 +60,7 @@ impl IndexRegistry {
         self.indexes.get(&col_id).map(|idx| idx.as_ref())
     }
 
-    /// Mendaftarkan entri baru secara Zero-Copy (menggunakan referensi borrowed &SqlValue)
+    /// Mendaftarkan entri baru secara Zero-Copy menggunakan referensi borrowed `&SqlValue`.
     pub fn insert_entry_ref(
         &mut self,
         row_id: RowId,
@@ -58,7 +71,7 @@ impl IndexRegistry {
         for &(col_id, val) in entries {
             if let Some(index) = self.indexes.get_mut(&col_id) {
                 if let Err(err) = index.insert(val, row_id) {
-                    // Rollback otomatis jika gagal
+                    // Rollback otomatis jika terjadi kegagalan/pelanggaran constraint
                     for (rb_col_id, rb_val) in inserted_cols {
                         if let Some(rb_index) = self.indexes.get_mut(&rb_col_id) {
                             let _ = rb_index.remove(rb_val, row_id);
@@ -73,7 +86,7 @@ impl IndexRegistry {
         Ok(())
     }
 
-    /// Menghapus entri baris dari seluruh indeks
+    /// Menghapus entri baris dari seluruh indeks secara atomic & zero-allocation.
     pub fn remove_entry_ref(
         &mut self,
         row_id: RowId,
@@ -91,9 +104,10 @@ impl IndexRegistry {
         self.indexes.clear();
     }
 
+    /// Mengosongkan entri di seluruh indeks secara in-place tanpa merealokasi Box wrapper.
     pub fn clear_entries(&mut self) {
         for index in self.indexes.values_mut() {
-            *index = Box::new(BTreeIndex::new(index.is_unique()));
+            index.clear();
         }
     }
 }

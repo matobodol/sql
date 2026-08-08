@@ -1,14 +1,24 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::catalog::CatalogStore;
-use crate::command::ColumnPosition;
-use crate::id::{ColumnId, TableId};
-use crate::table_store::TableStorage;
-use crate::{Column, ColumnConstraint, DomainError, Schema, SqlType, SqlValue};
+use crate::catalog::catalog_store::CatalogStore;
+use crate::id::TableId;
+use crate::schema::Column;
+use crate::schema::column_constraint::ColumnConstraint;
+use crate::storage::table_store::TableStorage;
+use crate::types::sql_type::SqlType;
+use crate::types::sql_value::SqlValue;
+use crate::{ColumnPosition, DomainError, QueryResult};
 
-// --- PRIVATE HANDLER FUNCTIONS ---
-
+pub(crate) fn create_table_action(
+    catalog: &mut CatalogStore,
+    tables: &mut HashMap<TableId, TableStorage>,
+    table_name: &str,
+    raw_columns: Vec<(String, SqlType, Vec<ColumnConstraint>)>,
+) -> Result<QueryResult, DomainError> {
+    create_table(catalog, tables, table_name, raw_columns)?;
+    Ok(QueryResult::Ok)
+}
 pub(crate) fn create_table(
     catalog: &mut CatalogStore,
     tables: &mut HashMap<TableId, TableStorage>,
@@ -24,18 +34,8 @@ pub(crate) fn create_table(
         }
     }
 
-    let schema_cols = catalog.get_schema_columns(table_id).ok_or_else(|| {
-        DomainError::TableNotFound(Arc::from(format!(
-            "Gagal mengambil skema untuk tabel '{table_name}'"
-        )))
-    })?;
-
-    if let Err(err) = Schema::validate_schema_columns(&schema_cols) {
-        let _ = catalog.unregister_table(table_name);
-        return Err(err);
-    }
-
-    let table_storage = TableStorage::new_with_arc(table_id, table_name, schema_cols);
+    let schema = catalog.get_schema(table_id)?;
+    let table_storage = TableStorage::new(table_id, table_name, schema);
     tables.insert(table_id, table_storage);
 
     Ok(table_id)
@@ -45,10 +45,10 @@ pub(crate) fn drop_table(
     catalog: &mut CatalogStore,
     tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,
-) -> Result<(), DomainError> {
+) -> Result<QueryResult, DomainError> {
     let table_id = catalog.unregister_table(table_name)?;
     tables.remove(&table_id);
-    Ok(())
+    Ok(QueryResult::Ok)
 }
 
 pub(crate) fn execute_add_columns(
@@ -65,20 +65,21 @@ pub(crate) fn execute_add_columns(
         .get_table_id(table_name)
         .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
 
-    let schema_arc = catalog
-        .get_schema_columns(table_id)
-        .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
-    let mut staged_columns = (*schema_arc).to_vec();
-
-    let mut insertions = Vec::with_capacity(columns.len());
-
     for (col_name, sql_type, constraints, position) in columns {
+        let current_schema = catalog.get_schema(table_id)?;
+
+        // OPTIMASI 1: Hybrid Lookup (Mencoba resolusi langsung dari skema, fallback ke pencarian case-insensitive)
         let target_idx = match position {
             ColumnPosition::First => 0,
             ColumnPosition::After(ref ref_col_name) => {
-                let pos = staged_columns
-                    .iter()
-                    .position(|c| c.name.eq_ignore_ascii_case(ref_col_name))
+                let pos = current_schema
+                    .get_column_index_by_name(ref_col_name)
+                    .or_else(|| {
+                        current_schema
+                            .columns()
+                            .iter()
+                            .position(|c| c.name.eq_ignore_ascii_case(ref_col_name))
+                    })
                     .ok_or_else(|| {
                         DomainError::eval_error(format!(
                             "Kolom referensi '{ref_col_name}' tidak ditemukan di skema"
@@ -86,48 +87,43 @@ pub(crate) fn execute_add_columns(
                     })?;
                 pos + 1
             }
-            ColumnPosition::Default => staged_columns.len(),
+            ColumnPosition::Default => current_schema.columns().len(),
         };
 
-        let temp_id = ColumnId(u32::MAX - staged_columns.len() as u32);
-        let dummy_col_def =
-            Column::with_constraints(temp_id, &col_name, sql_type.clone(), constraints.clone());
+        let col_id = catalog.register_column_at(
+            table_id,
+            &col_name,
+            sql_type.clone(),
+            constraints.clone(),
+            target_idx,
+        )?;
 
-        staged_columns.insert(target_idx, dummy_col_def);
-        insertions.push((target_idx, col_name, sql_type, constraints));
-    }
+        let col_def = Column::with_constraints(col_id, &col_name, sql_type, constraints);
+        let default_val = col_def.default_value().cloned().unwrap_or(SqlValue::Null);
 
-    Schema::validate_schema_columns(&staged_columns)?;
+        let table_storage = tables
+            .get_mut(&table_id)
+            .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
 
-    let mut committed_insertions = Vec::with_capacity(insertions.len());
-    for (target_idx, col_name, sql_type, constraints) in insertions {
-        let col_id =
-            catalog.register_column(table_id, &col_name, sql_type.clone(), constraints.clone())?;
-        let real_col_def = Column::with_constraints(col_id, &col_name, sql_type, constraints);
-
-        let default_val = real_col_def
-            .default_value()
-            .cloned()
-            .unwrap_or(SqlValue::Null);
-
-        committed_insertions.push((target_idx, default_val));
-    }
-
-    let final_schema_cols = catalog
-        .get_schema_columns(table_id)
-        .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
-
-    let table_storage = tables
-        .get_mut(&table_id)
-        .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
-
-    for (target_idx, default_val) in committed_insertions {
         table_storage
             .row_store_mut()
             .add_column_to_rows(target_idx, default_val);
     }
 
-    table_storage.rebuild_indexes(&final_schema_cols)?;
+    let new_schema = catalog.get_schema(table_id)?;
+    let table_storage = tables
+        .get_mut(&table_id)
+        .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
+
+    table_storage.update_schema(new_schema.clone());
+
+    // OPTIMASI 2: Conditional Index Rebuild (Hanya rebuild jika tabel memiliki baris DAN memiliki indeks aktif)
+    let has_rows = !table_storage.row_store().rows().is_empty();
+    let has_indexes = !table_storage.index_registry().is_empty();
+
+    if has_rows && has_indexes {
+        table_storage.rebuild_indexes(&new_schema)?;
+    }
 
     Ok(())
 }
@@ -147,23 +143,29 @@ pub(crate) fn execute_drop_column(
         .ok_or_else(|| DomainError::eval_error(format!("Kolom '{col_name}' tidak ditemukan")))?;
 
     catalog.unregister_column(table_id, col_name)?;
-
-    let new_schema_cols = catalog
-        .get_schema_columns(table_id)
-        .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
+    let new_schema = catalog.get_schema(table_id)?;
 
     let table_storage = tables
         .get_mut(&table_id)
         .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
 
+    table_storage.update_schema(new_schema.clone());
     table_storage.index_registry_mut().drop_index(col_id);
-    table_storage.rebuild_indexes(&new_schema_cols)?;
+
+    // Penerapan Conditional Index Rebuild yang serupa pada penghapusan kolom
+    let has_rows = !table_storage.row_store().rows().is_empty();
+    let has_indexes = !table_storage.index_registry().is_empty();
+
+    if has_rows && has_indexes {
+        table_storage.rebuild_indexes(&new_schema)?;
+    }
 
     Ok(())
 }
 
 pub(crate) fn execute_rename_column(
     catalog: &mut CatalogStore,
+    tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,
     old_name: &str,
     new_name: &str,
@@ -178,7 +180,14 @@ pub(crate) fn execute_rename_column(
 
     catalog.mutate_column(table_id, col_id, |col| {
         col.name = new_name.to_string();
-    })
+    })?;
+
+    let new_schema = catalog.get_schema(table_id)?;
+    if let Some(table_storage) = tables.get_mut(&table_id) {
+        table_storage.update_schema(new_schema);
+    }
+
+    Ok(())
 }
 
 pub(crate) fn execute_rename_table(
@@ -186,18 +195,19 @@ pub(crate) fn execute_rename_table(
     tables: &mut HashMap<TableId, TableStorage>,
     old_name: &str,
     new_name: &str,
-) -> Result<(), DomainError> {
+) -> Result<QueryResult, DomainError> {
     let table_id = catalog.rename_table(old_name, new_name)?;
 
     if let Some(table_storage) = tables.get_mut(&table_id) {
         table_storage.set_name(new_name);
     }
 
-    Ok(())
+    Ok(QueryResult::Ok)
 }
 
 pub(crate) fn execute_modify_column_type(
     catalog: &mut CatalogStore,
+    tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,
     col_name: &str,
     new_type: SqlType,
@@ -213,8 +223,15 @@ pub(crate) fn execute_modify_column_type(
         .ok_or_else(|| DomainError::eval_error(format!("Kolom '{col_name}' tidak ditemukan")))?;
 
     catalog.mutate_column(table_id, col_id, |col| {
-        col.sql_type = new_type;
-    })
+        col.sql_type = new_type.clone();
+    })?;
+
+    let new_schema = catalog.get_schema(table_id)?;
+    if let Some(table_storage) = tables.get_mut(&table_id) {
+        table_storage.update_schema(new_schema);
+    }
+
+    Ok(())
 }
 
 pub(crate) fn execute_add_constraint(
@@ -238,19 +255,24 @@ pub(crate) fn execute_add_constraint(
         }
     })?;
 
-    if matches!(
-        constraint,
-        ColumnConstraint::Unique | ColumnConstraint::PrimaryKey
-    ) {
-        let schema_cols = catalog
-            .get_schema_columns(table_id)
-            .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
+    let new_schema = catalog.get_schema(table_id)?;
 
-        if let Some(table_storage) = tables.get_mut(&table_id) {
+    if let Some(table_storage) = tables.get_mut(&table_id) {
+        table_storage.update_schema(new_schema.clone());
+
+        if matches!(
+            constraint,
+            ColumnConstraint::Unique | ColumnConstraint::PrimaryKey
+        ) {
             let _ = table_storage
                 .index_registry_mut()
                 .create_btree_index(col_id, true);
-            table_storage.rebuild_indexes(&schema_cols)?;
+
+            let has_rows = !table_storage.row_store().rows().is_empty();
+            let has_indexes = !table_storage.index_registry().is_empty();
+            if has_rows && has_indexes {
+                table_storage.rebuild_indexes(&new_schema)?;
+            }
         }
     }
 
@@ -259,6 +281,7 @@ pub(crate) fn execute_add_constraint(
 
 pub(crate) fn execute_drop_constraint(
     catalog: &mut CatalogStore,
+    tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,
     col_name: &str,
     constraint: &ColumnConstraint,
@@ -273,11 +296,19 @@ pub(crate) fn execute_drop_constraint(
 
     catalog.mutate_column(table_id, col_id, |col| {
         col.constraints.retain(|c| c != constraint);
-    })
+    })?;
+
+    let new_schema = catalog.get_schema(table_id)?;
+    if let Some(table_storage) = tables.get_mut(&table_id) {
+        table_storage.update_schema(new_schema);
+    }
+
+    Ok(())
 }
 
 pub(crate) fn execute_set_default(
     catalog: &mut CatalogStore,
+    tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,
     col_name: &str,
     default_val: Option<SqlValue>,
@@ -293,8 +324,16 @@ pub(crate) fn execute_set_default(
     catalog.mutate_column(table_id, col_id, |col| {
         col.constraints
             .retain(|c| !matches!(c, ColumnConstraint::Default(_)));
-        if let Some(val) = default_val {
-            col.constraints.push(ColumnConstraint::Default(val));
-        }
-    })
+        col.constraints
+            .push(ColumnConstraint::Default(SqlValue::from(
+                default_val.clone(),
+            )));
+    })?;
+
+    let new_schema = catalog.get_schema(table_id)?;
+    if let Some(table_storage) = tables.get_mut(&table_id) {
+        table_storage.update_schema(new_schema);
+    }
+
+    Ok(())
 }

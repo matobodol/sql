@@ -11,11 +11,7 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AutoIncrement {
-    /// Auto increment biasa (increment +1)
-    Enabled {
-        start: i64,
-        step: i64,
-    },
+    Enabled { start: i64, step: i64 },
     Disabled,
 }
 
@@ -23,6 +19,53 @@ pub enum AutoIncrement {
 pub struct Schema {
     columns: Vec<Column>,
     table_constraints: Vec<TableConstraint>,
+    /// Cache ekspresi CHECK yang ter-bind ke indeks kolom untuk evaluasi O(1)
+    #[serde(skip)]
+    bound_column_checks: Vec<(usize, Expr)>,
+    #[serde(skip)]
+    bound_table_checks: Vec<Expr>,
+    #[serde(skip)]
+    has_check_constraints: bool,
+}
+
+impl Schema {
+    /// Menyisipkan kolom baru pada posisi indeks tertentu di skema
+    /// dan mengompilasi ulang evaluasi CHECK constraint.
+    pub fn insert_column(&mut self, index: usize, col: Column) -> Result<(), DomainError> {
+        if index > self.columns.len() {
+            return Err(DomainError::eval_error(format!(
+                "Indeks penyisipan kolom {index} melebihi jumlah kolom {}",
+                self.columns.len()
+            )));
+        }
+
+        let mut staged_columns = self.columns.clone();
+        staged_columns.insert(index, col);
+
+        Self::validate_schema_columns(&staged_columns)?;
+        self.columns = staged_columns;
+        self.compile_check_constraints()?;
+        Ok(())
+    }
+
+    pub fn columns_mut(&mut self) -> &mut Vec<Column> {
+        &mut self.columns
+    }
+    /// Menghapus kolom dari skema berdasarkan `ColumnId`.
+    pub fn remove_column(&mut self, col_id: ColumnId) -> Result<Column, DomainError> {
+        let position = self
+            .columns
+            .iter()
+            .position(|col| col.id == col_id)
+            .ok_or_else(|| {
+                DomainError::eval_error(format!(
+                    "ColumnId {:?} tidak ditemukan di dalam skema",
+                    col_id
+                ))
+            })?;
+
+        Ok(self.columns.remove(position))
+    }
 }
 
 impl Schema {
@@ -30,14 +73,8 @@ impl Schema {
     // KONSTRUKTOR & STAGING VALIDATOR
     // =========================================================================
 
-    /// Konstruktor utama dengan validasi atomik
     pub fn new(columns: Vec<Column>) -> Result<Self, DomainError> {
-        Self::validate_schema_columns(&columns)?;
-
-        Ok(Self {
-            columns,
-            table_constraints: Vec::new(),
-        })
+        Self::with_table_constraints(columns, Vec::new())
     }
 
     pub fn with_table_constraints(
@@ -46,23 +83,53 @@ impl Schema {
     ) -> Result<Self, DomainError> {
         Self::validate_schema_columns(&columns)?;
 
-        Ok(Self {
+        let mut schema = Self {
             columns,
             table_constraints,
-        })
+            bound_column_checks: Vec::new(),
+            bound_table_checks: Vec::new(),
+            has_check_constraints: false,
+        };
+
+        schema.compile_check_constraints()?;
+        Ok(schema)
     }
 
-    /// Single Source of Truth Validator untuk seluruh daftar kolom
+    /// Mengompilasi dan mengikat seluruh ekspresi CHECK constraint ke ColumnIndex
+    fn compile_check_constraints(&mut self) -> Result<(), DomainError> {
+        self.bound_column_checks.clear();
+        self.bound_table_checks.clear();
+
+        for (col_idx, col) in self.columns.iter().enumerate() {
+            for constraint in &col.constraints {
+                if let ColumnConstraint::Check(expr) = constraint {
+                    let bound_expr = bind_expr_columns(expr, self)?;
+                    self.bound_column_checks.push((col_idx, bound_expr));
+                }
+            }
+        }
+
+        for t_constraint in &self.table_constraints {
+            if let TableConstraint::Check(expr) = t_constraint {
+                let bound_expr = bind_expr_columns(expr, self)?;
+                self.bound_table_checks.push(bound_expr);
+            }
+        }
+
+        self.has_check_constraints =
+            !self.bound_column_checks.is_empty() || !self.bound_table_checks.is_empty();
+
+        Ok(())
+    }
+
     pub fn validate_schema_columns(columns: &[Column]) -> Result<(), DomainError> {
         let mut seen_names = HashSet::with_capacity(columns.len());
 
         for col in columns {
             let col_name_lower = col.name.to_lowercase();
 
-            // 1. Validasi duplikasi varian Enum
             col.sql_type.validate_enum_variants()?;
 
-            // 2. Cek Duplikasi Nama Kolom (Case-Insensitive)
             if !seen_names.insert(col_name_lower) {
                 return Err(DomainError::eval_error(format!(
                     "Duplikat nama kolom '{}' dalam skema tabel",
@@ -70,7 +137,6 @@ impl Schema {
                 )));
             }
 
-            // 3. Cek Kombinasi Constraint Kolom
             let mut default_count = 0;
             let mut has_auto_increment = false;
 
@@ -98,7 +164,6 @@ impl Schema {
                 )));
             }
 
-            // 4. Cek Tipe Data AutoIncrement (Wajib Int)
             if has_auto_increment && !matches!(col.sql_type, SqlType::Int) {
                 return Err(DomainError::eval_error(format!(
                     "AutoIncrement pada kolom '{}' hanya dapat digunakan untuk tipe data Int",
@@ -111,20 +176,19 @@ impl Schema {
     }
 
     // =========================================================================
-    // MUTATION METHODS (DENGAN RE-VALIDATION ATOMIK)
+    // MUTATION METHODS (DENGAN COMPILATION ATOMIK)
     // =========================================================================
 
-    /// MULTIPLE ADD COLUMNS (ATOMIK)
     pub fn add_columns(&mut self, new_columns: Vec<Column>) -> Result<(), DomainError> {
         let mut staged_columns = self.columns.clone();
         staged_columns.extend(new_columns);
 
         Self::validate_schema_columns(&staged_columns)?;
         self.columns = staged_columns;
+        self.compile_check_constraints()?;
         Ok(())
     }
 
-    /// Mengubah SqlType dari kolom tertentu secara aman
     pub fn modify_column_type(
         &mut self,
         col_id: ColumnId,
@@ -143,13 +207,12 @@ impl Schema {
 
         col.sql_type = new_type;
 
-        // Re-validate seluruh skema (Cek enum variants & AutoIncrement compatibility)
         Self::validate_schema_columns(&staged_columns)?;
         self.columns = staged_columns;
+        self.compile_check_constraints()?;
         Ok(())
     }
 
-    /// Menambahkan constraint baru ke kolom secara aman
     pub fn add_column_constraint(
         &mut self,
         col_id: ColumnId,
@@ -163,13 +226,12 @@ impl Schema {
 
         col.constraints.push(constraint);
 
-        // Re-validate seluruh skema (Cek konflik DEFAULT & AutoIncrement)
         Self::validate_schema_columns(&staged_columns)?;
         self.columns = staged_columns;
+        self.compile_check_constraints()?;
         Ok(())
     }
 
-    /// Mengubah nama kolom
     pub fn rename_column(&mut self, col_id: ColumnId, new_name: &str) -> Result<(), DomainError> {
         let mut staged_columns = self.columns.clone();
         let col = staged_columns
@@ -184,13 +246,12 @@ impl Schema {
 
         col.name = new_name.to_string();
 
-        // Re-validate (Cek duplikasi nama)
         Self::validate_schema_columns(&staged_columns)?;
         self.columns = staged_columns;
+        self.compile_check_constraints()?;
         Ok(())
     }
 
-    /// Menghapus constraint dari kolom
     pub fn drop_column_constraint(
         &mut self,
         col_id: ColumnId,
@@ -212,10 +273,10 @@ impl Schema {
             )));
         }
 
+        self.compile_check_constraints()?;
         Ok(())
     }
 
-    /// Mengubah atau menghapus nilai default pada ColumnDef
     pub fn set_column_default(
         &mut self,
         col_id: ColumnId,
@@ -236,11 +297,12 @@ impl Schema {
 
         Self::validate_schema_columns(&staged_columns)?;
         self.columns = staged_columns;
+        self.compile_check_constraints()?;
         Ok(())
     }
 
     // =========================================================================
-    // READ HELPERS & ROW VALIDATION
+    // READ HELPERS & OPTIMIZED ROW VALIDATION
     // =========================================================================
 
     #[inline]
@@ -255,7 +317,6 @@ impl Schema {
             .position(|col| col.name.eq_ignore_ascii_case(name))
     }
 
-    /// Alias pendukung untuk kompatibilitas pencarian indeks berbasis nama
     #[inline]
     pub fn get_column_index_by_name(&self, name: &str) -> Option<usize> {
         self.index(name)
@@ -281,7 +342,6 @@ impl Schema {
         &self.table_constraints
     }
 
-    /// Pencarian indeks fleksibel (Mendukung nama kolom biasa & format qualified `table.column`)
     pub fn index(&self, col_name: &str) -> Option<usize> {
         if let Some(idx) = self
             .columns
@@ -301,7 +361,6 @@ impl Schema {
         None
     }
 
-    /// Deprecated fallback alias untuk `index`
     #[inline]
     pub fn index_of(&self, col_name: &str) -> Option<usize> {
         self.index(col_name)
@@ -315,9 +374,6 @@ impl Schema {
                 values.len()
             )));
         }
-
-        // RowId dummy (0) khusus untuk evaluasi CHECK constraint
-        let temp_row = Row::with_id(RowId::from(0u64), values.to_vec());
 
         for (col, val) in self.columns.iter().zip(values.iter()) {
             if val.is_null() {
@@ -333,34 +389,31 @@ impl Schema {
                     found: Arc::from(format!("{:?}", val).as_str()),
                 });
             }
+        }
 
-            for constraint in &col.constraints {
-                if let ColumnConstraint::Check(expr) = constraint {
-                    // Perbaikan: Lakukan bind_expr_columns sebelum memanggil eval_expr(bound_expr, row)
-                    let bound_expr = bind_expr_columns(expr, self)?;
-                    let res = eval_expr(&bound_expr, &temp_row)?;
+        // Fast-path: Skip evaluasi jika tidak ada CHECK constraint
+        if !self.has_check_constraints {
+            return Ok(());
+        }
 
-                    if !res.is_null() && res.as_ref() == &SqlValue::Bool(false) {
-                        return Err(DomainError::eval_error(format!(
-                            "Pelanggaran CHECK constraint pada kolom '{}'",
-                            col.name
-                        )));
-                    }
-                }
+        let temp_row = Row::with_id(RowId::from(0u64), values.to_vec());
+
+        for (col_idx, bound_expr) in &self.bound_column_checks {
+            let res = eval_expr(bound_expr, &temp_row)?;
+            if !res.is_null() && res.as_ref() == &SqlValue::Bool(false) {
+                return Err(DomainError::eval_error(format!(
+                    "Pelanggaran CHECK constraint pada kolom '{}'",
+                    self.columns[*col_idx].name
+                )));
             }
         }
 
-        for t_constraint in &self.table_constraints {
-            if let TableConstraint::Check(expr) = t_constraint {
-                // Perbaikan: Pre-bind ekspresi tingkat tabel ke ColumnIndex
-                let bound_expr = bind_expr_columns(expr, self)?;
-                let res = eval_expr(&bound_expr, &temp_row)?;
-
-                if !res.is_null() && res.as_ref() == &SqlValue::Bool(false) {
-                    return Err(DomainError::eval_error(
-                        "Pelanggaran CHECK constraint pada tabel",
-                    ));
-                }
+        for bound_expr in &self.bound_table_checks {
+            let res = eval_expr(bound_expr, &temp_row)?;
+            if !res.is_null() && res.as_ref() == &SqlValue::Bool(false) {
+                return Err(DomainError::eval_error(
+                    "Pelanggaran CHECK constraint pada tabel",
+                ));
             }
         }
 
@@ -368,8 +421,6 @@ impl Schema {
     }
 }
 
-/// Pre-binding helper: Mengonversi `Expr::Column(name)` ke `Expr::ColumnIndex(offset)` O(1)
-/// menggunakan pementa-an indeks dari `Schema`.
 pub fn bind_expr_columns(expr: &Expr, schema: &Schema) -> Result<Expr, DomainError> {
     match expr {
         Expr::Column(name) => {
@@ -402,7 +453,6 @@ pub fn bind_expr_columns(expr: &Expr, schema: &Schema) -> Result<Expr, DomainErr
                 list: bound_list,
             })
         }
-        // Varian literal atau yang sudah ter-bind (ColumnIndex, Literal, dll.)
         other => Ok(other.clone()),
     }
 }

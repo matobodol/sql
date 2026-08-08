@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, btree_map::Entry};
+use std::collections::BTreeMap;
 use std::ops::Bound;
 
 use crate::id::RowId;
@@ -6,7 +6,7 @@ use crate::{DomainError, SqlValue};
 
 use super::traits::Index;
 
-/// Implementasi BTree Index yang dioptimalkan memori & performanya.
+/// Implementasi BTree Index yang dioptimalkan memori dan nol alokasi sementara pada operasi pencarian/penghapusan.
 #[derive(Debug, Clone)]
 pub struct BTreeIndex {
     /// Pemetaan dari `SqlValue` ke kumpulan `RowId`
@@ -16,6 +16,7 @@ pub struct BTreeIndex {
 }
 
 impl BTreeIndex {
+    /// Inisialisasi BTree index baru.
     pub fn new(is_unique: bool) -> Self {
         Self {
             map: BTreeMap::new(),
@@ -29,44 +30,44 @@ impl Index for BTreeIndex {
         Box::new(self.clone())
     }
 
-    /// Memasukkan entri secara zero-copy (hanya mengkloning key jika key belum ada di BTree)
+    /// Memasukkan entri dengan lazy-cloning (kloning key hanya dilakukan jika key belum ada di BTree).
     fn insert(&mut self, key: &SqlValue, row_id: RowId) -> Result<(), DomainError> {
-        match self.map.entry(key.clone()) {
-            Entry::Occupied(mut entry) => {
-                // Sesuai standar SQL: Hanya nilai NON-NULL yang diperiksa keunikannya.
-                if self.is_unique && !key.is_null() {
-                    return Err(DomainError::invalid_expr(format!(
-                        "Pelanggaran keunikan indeks BTree pada nilai '{:?}'",
-                        key
-                    )));
-                }
+        // Cek terlebih dahulu apakah key sudah ada untuk menghindari kloning key di awal
+        if let Some(rows) = self.map.get_mut(key) {
+            // Sesuai standar SQL: Hanya nilai NON-NULL yang diperiksa keunikannya
+            if self.is_unique && !key.is_null() {
+                return Err(DomainError::invalid_expr(format!(
+                    "Pelanggaran keunikan indeks BTree pada nilai '{:?}'",
+                    key
+                )));
+            }
 
-                let rows = entry.get_mut();
-                if !rows.contains(&row_id) {
-                    rows.push(row_id);
-                }
+            if !rows.contains(&row_id) {
+                rows.push(row_id);
             }
-            Entry::Vacant(entry) => {
-                entry.insert(vec![row_id]);
-            }
+            return Ok(());
         }
 
+        // Kunci belum ada, lakukan alokasi kloning key sekali saja
+        self.map.insert(key.clone(), vec![row_id]);
         Ok(())
     }
 
+    /// Menghapus `RowId` tanpa melakukan kloning `SqlValue` (Zero-Allocation Remove).
     fn remove(&mut self, key: &SqlValue, row_id: RowId) -> Result<(), DomainError> {
-        if let Entry::Occupied(mut entry) = self.map.entry(key.clone()) {
-            let rows = entry.get_mut();
+        // Gunakan get_mut berbasis referensi &SqlValue tanpa entry API yang butuh owned key
+        if let Some(rows) = self.map.get_mut(key) {
             rows.retain(|&id| id != row_id);
             if rows.is_empty() {
-                entry.remove();
+                self.map.remove(key);
             }
         }
         Ok(())
     }
 
-    fn lookup(&self, key: &SqlValue) -> Vec<RowId> {
-        self.map.get(key).cloned().unwrap_or_default()
+    /// Mengembalikan borrowed slice `&[RowId]` langsung dari BTreeMap tanpa alokasi `Vec` baru.
+    fn lookup(&self, key: &SqlValue) -> &[RowId] {
+        self.map.get(key).map(|vec| vec.as_slice()).unwrap_or(&[])
     }
 
     fn range_lookup(&self, min: Bound<&SqlValue>, max: Bound<&SqlValue>) -> Vec<RowId> {
@@ -76,7 +77,13 @@ impl Index for BTreeIndex {
             .collect()
     }
 
+    #[inline]
     fn is_unique(&self) -> bool {
         self.is_unique
+    }
+
+    #[inline]
+    fn clear(&mut self) {
+        self.map.clear();
     }
 }
