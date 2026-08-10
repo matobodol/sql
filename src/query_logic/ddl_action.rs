@@ -8,40 +8,9 @@ use crate::storage::table_store::TableStorage;
 use crate::types::data_type::DataType;
 use crate::types::value_type::ValueType;
 use crate::validator::validate_enum_variants;
-use crate::{ColumnPosition, DomainError, QueryResult, TableId};
+use crate::{ColumnPosition, DomainError, TableId};
 
-pub(crate) fn apply_create_table(
-    catalog: &mut CatalogStore,
-    tables: &mut HashMap<TableId, TableStorage>,
-    table_name: &str,
-    raw_columns: Vec<(String, DataType, Vec<ColumnConstraint>)>,
-) -> Result<TableId, DomainError> {
-    let table_id = catalog.register_table(table_name)?;
-
-    for (col_name, sql_type, constraints) in raw_columns {
-        if let Err(err) = catalog.register_column(table_id, &col_name, sql_type, constraints) {
-            let _ = catalog.unregister_table(table_name);
-            return Err(err);
-        }
-    }
-
-    let schema = catalog.get_schema(table_id)?;
-    let table_storage = TableStorage::new(table_id, table_name, schema);
-    tables.insert(table_id, table_storage);
-
-    Ok(table_id)
-}
-
-pub(crate) fn apply_drop_table(
-    catalog: &mut CatalogStore,
-    tables: &mut HashMap<TableId, TableStorage>,
-    table_name: &str,
-) -> Result<QueryResult, DomainError> {
-    let table_id = catalog.unregister_table(table_name)?;
-    tables.remove(&table_id);
-    Ok(QueryResult::OK)
-}
-
+// --- ALTER ACTION
 pub(crate) fn apply_add_columns(
     catalog: &mut CatalogStore,
     tables: &mut HashMap<TableId, TableStorage>,
@@ -52,9 +21,7 @@ pub(crate) fn apply_add_columns(
         return Ok(());
     }
 
-    let table_id = catalog
-        .get_table_id(table_name)
-        .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
+    let table_id = catalog.get_table_id(table_name)?;
 
     for (col_name, sql_type, constraints, position) in columns {
         let current_schema = catalog.get_schema(table_id)?;
@@ -125,13 +92,9 @@ pub(crate) fn apply_drop_column(
     table_name: &str,
     col_name: &str,
 ) -> Result<(), DomainError> {
-    let table_id = catalog
-        .get_table_id(table_name)
-        .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
+    let table_id = catalog.get_table_id(table_name)?;
 
-    let col_id = catalog
-        .get_column_id(table_id, col_name)
-        .ok_or_else(|| DomainError::eval_error(format!("Kolom '{col_name}' tidak ditemukan")))?;
+    let col_id = catalog.get_column_id(table_id, col_name)?;
 
     catalog.unregister_column(table_id, col_name)?;
     let new_schema = catalog.get_schema(table_id)?;
@@ -161,13 +124,9 @@ pub(crate) fn apply_rename_column(
     old_name: &str,
     new_name: &str,
 ) -> Result<(), DomainError> {
-    let table_id = catalog
-        .get_table_id(table_name)
-        .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
+    let table_id = catalog.get_table_id(table_name)?;
 
-    let col_id = catalog
-        .get_column_id(table_id, old_name)
-        .ok_or_else(|| DomainError::eval_error(format!("Kolom '{old_name}' tidak ditemukan")))?;
+    let col_id = catalog.get_column_id(table_id, old_name)?;
 
     catalog.mutate_column(table_id, col_id, |col| {
         col.name = new_name.to_string();
@@ -181,21 +140,6 @@ pub(crate) fn apply_rename_column(
     Ok(())
 }
 
-pub(crate) fn apply_rename_table(
-    catalog: &mut CatalogStore,
-    tables: &mut HashMap<TableId, TableStorage>,
-    old_name: &str,
-    new_name: &str,
-) -> Result<QueryResult, DomainError> {
-    let table_id = catalog.rename_table(old_name, new_name)?;
-
-    if let Some(table_storage) = tables.get_mut(&table_id) {
-        table_storage.set_name(new_name);
-    }
-
-    Ok(QueryResult::OK)
-}
-
 pub(crate) fn apply_modify_column_type(
     catalog: &mut CatalogStore,
     tables: &mut HashMap<TableId, TableStorage>,
@@ -205,13 +149,9 @@ pub(crate) fn apply_modify_column_type(
 ) -> Result<(), DomainError> {
     validate_enum_variants(&new_type)?;
 
-    let table_id = catalog
-        .get_table_id(table_name)
-        .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
+    let table_id = catalog.get_table_id(table_name)?;
 
-    let col_id = catalog
-        .get_column_id(table_id, col_name)
-        .ok_or_else(|| DomainError::eval_error(format!("Kolom '{col_name}' tidak ditemukan")))?;
+    let col_id = catalog.get_column_id(table_id, col_name)?;
 
     catalog.mutate_column(table_id, col_id, |col| {
         col.sql_type = new_type.clone();
@@ -232,13 +172,9 @@ pub(crate) fn apply_add_constraint(
     col_name: &str,
     constraint: ColumnConstraint,
 ) -> Result<(), DomainError> {
-    let table_id = catalog
-        .get_table_id(table_name)
-        .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
+    let table_id = catalog.get_table_id(table_name)?;
 
-    let col_id = catalog
-        .get_column_id(table_id, col_name)
-        .ok_or_else(|| DomainError::eval_error(format!("Kolom '{col_name}' tidak ditemukan")))?;
+    let col_id = catalog.get_column_id(table_id, col_name)?;
 
     catalog.mutate_column(table_id, col_id, |col| {
         if !col.constraints.contains(&constraint) {
@@ -277,13 +213,9 @@ pub(crate) fn apply_drop_constraint(
     col_name: &str,
     constraint: &ColumnConstraint,
 ) -> Result<(), DomainError> {
-    let table_id = catalog
-        .get_table_id(table_name)
-        .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
+    let table_id = catalog.get_table_id(table_name)?;
 
-    let col_id = catalog
-        .get_column_id(table_id, col_name)
-        .ok_or_else(|| DomainError::eval_error(format!("Kolom '{col_name}' tidak ditemukan")))?;
+    let col_id = catalog.get_column_id(table_id, col_name)?;
 
     catalog.mutate_column(table_id, col_id, |col| {
         col.constraints.retain(|c| c != constraint);
@@ -304,13 +236,9 @@ pub(crate) fn apply_set_default(
     col_name: &str,
     default_val: Option<ValueType>,
 ) -> Result<(), DomainError> {
-    let table_id = catalog
-        .get_table_id(table_name)
-        .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
+    let table_id = catalog.get_table_id(table_name)?;
 
-    let col_id = catalog
-        .get_column_id(table_id, col_name)
-        .ok_or_else(|| DomainError::eval_error(format!("Kolom '{col_name}' tidak ditemukan")))?;
+    let col_id = catalog.get_column_id(table_id, col_name)?;
 
     catalog.mutate_column(table_id, col_id, |col| {
         col.constraints

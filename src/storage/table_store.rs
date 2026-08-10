@@ -1,16 +1,18 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::DomainError;
 use crate::index::index_registry::IndexRegistry;
-use crate::schema::{AutoIncrement, Schema};
+use crate::schema::{Increment, Schema};
 use crate::storage::row_store::RowStore;
-use crate::{ColumnId, TableId};
+use crate::{ColumnId, DomainError, TableId};
 
 #[derive(Debug)]
 pub struct TableStorage {
+    // OWNER
     table_id: TableId,
     name: String,
+
+    // STORE
     schema: Arc<Schema>,
     row_store: RowStore,
     index_registry: IndexRegistry,
@@ -22,7 +24,7 @@ impl TableStorage {
         let mut auto_increment_counters = HashMap::new();
 
         for col in schema.columns() {
-            if let Some(AutoIncrement::Enabled { start, .. }) = col.auto_increment_config() {
+            if let Some(Increment::Enabled { start, .. }) = col.auto_increment_config() {
                 auto_increment_counters.insert(col.id, *start);
             }
         }

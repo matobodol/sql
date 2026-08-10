@@ -174,7 +174,7 @@ impl ValueType {
                     DomainError::eval_error(format!("Gagal mengonversi teks '{s}' ke Float"))
                 }),
 
-            (ValueType::Text(s), DataType::Bool) => match s.trim().to_lowercase().as_str() {
+            (ValueType::Text(s), DataType::Bool) => match s.trim() {
                 "true" | "1" | "t" => Ok(ValueType::Bool(true)),
                 "false" | "0" | "f" => Ok(ValueType::Bool(false)),
                 _ => Err(DomainError::eval_error(format!(

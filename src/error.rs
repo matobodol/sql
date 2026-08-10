@@ -15,7 +15,6 @@ pub enum DomainError {
     #[error("Gagal mengeksekusi: {0}")]
     ExecutionError(Arc<str>),
 
-    /// Error saat ekstraksi/konversi `SqlValue` ke tipe Rust asli gagal.
     #[error(
         "Gagal konversi SqlValue: mengharapkan tipe '{expected}', tetapi menemukan tipe '{found}'"
     )]
@@ -35,30 +34,53 @@ pub enum DomainError {
 
     #[error("Tabel '{0}' sudah ada")]
     TableAlreadyExists(Arc<str>),
+
+    // --- Varian Tambahan untuk User & Database Management ---
+    #[error("User '{0}' tidak ditemukan")]
+    UserNotFound(Arc<str>),
+
+    #[error("User '{0}' sudah ada")]
+    UserAlreadyExists(Arc<str>),
+
+    #[error("Password tidak valid untuk user '{0}'")]
+    UserPasswordInvalid(Arc<str>),
+
+    #[error("Database '{0}' tidak ditemukan")]
+    DatabaseNotFound(Arc<str>),
+
+    #[error("Database '{0}' sudah ada")]
+    DatabaseAlreadyExists(Arc<str>),
+
+    #[error("Tidak ada database aktif")]
+    NoActiveDatabase,
+
+    #[error("{0}")]
+    Catalog(Arc<str>),
 }
 
 impl DomainError {
-    /// Helper constructor idiomatik untuk error konversi.
     #[inline]
     pub fn conversion(expected: &'static str, found: &'static str) -> Self {
         Self::Conversion { expected, found }
     }
 
-    /// Helper constructor fleksibel untuk InvalidExpression
     #[inline]
     pub fn invalid_expr(msg: impl Into<Arc<str>>) -> Self {
         Self::InvalidExpression(msg.into())
     }
 
-    /// Helper constructor fleksibel untuk EvaluationError
     #[inline]
     pub fn eval_error(msg: impl Into<Arc<str>>) -> Self {
         Self::EvaluationError(msg.into())
     }
 
-    /// Helper constructor fleksibel untuk ExecutionError
     #[inline]
     pub fn exec_error(msg: impl Into<Arc<str>>) -> Self {
         Self::ExecutionError(msg.into())
+    }
+
+    #[inline]
+    pub fn catalog(msg: impl Into<Arc<str>>) -> Self {
+        Self::Catalog(msg.into())
     }
 }

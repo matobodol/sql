@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ColumnConstraint, ColumnId, DataType, ValueType, schema::AutoIncrement};
+use crate::{ColumnConstraint, ColumnId, DataType, ValueType, schema::Increment};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Column {
@@ -50,9 +50,9 @@ impl Column {
     }
 
     /// Helper untuk memeriksa apakah kolom ini memiliki constraint AutoIncrement
-    pub fn auto_increment_config(&self) -> Option<&AutoIncrement> {
+    pub fn auto_increment_config(&self) -> Option<&Increment> {
         self.constraints.iter().find_map(|c| match c {
-            ColumnConstraint::AutoIncrement(cfg @ AutoIncrement::Enabled { .. }) => Some(cfg),
+            ColumnConstraint::Auto(cfg @ Increment::Enabled { .. }) => Some(cfg),
             _ => None,
         })
     }

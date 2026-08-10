@@ -1,13 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::Bound;
-use std::sync::Arc;
 
-use crate::TableStorage;
+use crate::catalog::CatalogStore;
 use crate::expression::{eval_expr, eval_where};
 use crate::validator::validate_row;
-use crate::{
-    AutoIncrement, BinaryOp, ColumnId, Database, DomainError, Expr, RowId, Schema, ValueType,
-};
+use crate::{BinaryOp, ColumnId, DomainError, Expr, Increment, RowId, Schema, ValueType};
+use crate::{TableId, TableStorage};
 
 struct StagedUpdate {
     row_idx: usize,
@@ -18,31 +16,29 @@ struct StagedUpdate {
 }
 
 pub(crate) fn handle_insert(
-    db: &mut Database,
-    table_name: &str,
+    catalog: &CatalogStore,
+    table_storage: &mut TableStorage,
+    table_id: TableId,
     raw_rows: Vec<Vec<ValueType>>,
 ) -> Result<usize, DomainError> {
     if raw_rows.is_empty() {
         return Ok(0);
     }
 
-    let table_id = db
-        .catalog()
-        .get_table_id(table_name)
-        .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
+    // let table_id = catalog.get_table_id(table_name)?;
 
     // O(1) Zero-Allocation Fetch: Mengambil Arc<Schema> langsung dari CatalogStore
-    let schema = db.catalog().get_schema(table_id)?;
+    let schema = catalog.get_schema(table_id)?;
     let columns = schema.columns();
     let total_rows = raw_rows.len();
 
-    let table = db.get_table_storage_mut(table_name)?;
+    // let table = catalog.get_table_storage_mut(table_name)?;
 
     // Identifikasi kolom berindeks untuk penyaringan alokasi entri indeks secara selektif
     let indexed_col_indices: Vec<(usize, ColumnId)> = columns
         .iter()
         .enumerate()
-        .filter(|(_, col)| table.index_registry().has_index(col.id))
+        .filter(|(_, col)| table_storage.index_registry().has_index(col.id))
         .map(|(idx, col)| (idx, col.id))
         .collect();
 
@@ -53,8 +49,8 @@ pub(crate) fn handle_insert(
     }
 
     let mut staged_rows = Vec::with_capacity(total_rows);
-    let mut staged_counters = table.auto_increment_counters().clone();
-    let next_start_id = table.row_store().next_row_id();
+    let mut staged_counters = table_storage.auto_increment_counters().clone();
+    let next_start_id = table_storage.row_store().next_row_id();
 
     for (offset, mut row_values) in raw_rows.into_iter().enumerate() {
         if row_values.len() < columns.len() {
@@ -71,7 +67,7 @@ pub(crate) fn handle_insert(
 
                 row_values[i] = ValueType::Int(*counter);
                 let step = match col.auto_increment_config() {
-                    Some(AutoIncrement::Enabled { step, .. }) => *step,
+                    Some(Increment::Enabled { step, .. }) => *step,
                     _ => 1,
                 };
                 *counter += step;
@@ -107,7 +103,7 @@ pub(crate) fn handle_insert(
             .map(|(col_id, val)| (*col_id, val))
             .collect();
 
-        if let Err(err) = table
+        if let Err(err) = table_storage
             .index_registry_mut()
             .insert_entry_ref(staged.assigned_row_id, &entries_ref)
         {
@@ -119,7 +115,7 @@ pub(crate) fn handle_insert(
                     .map(|(col_id, val)| (*col_id, val))
                     .collect();
 
-                let _ = table
+                let _ = table_storage
                     .index_registry_mut()
                     .remove_entry_ref(rb_staged.assigned_row_id, &rb_entries_ref);
             }
@@ -127,37 +123,32 @@ pub(crate) fn handle_insert(
         }
     }
 
-    *table.auto_increment_counters_mut() = staged_counters;
+    *table_storage.auto_increment_counters_mut() = staged_counters;
 
     let rows_to_insert: Vec<Vec<ValueType>> = staged_rows
         .into_iter()
         .map(|staged| staged.prepared_values)
         .collect();
 
-    table.row_store_mut().insert_rows(rows_to_insert);
+    table_storage.row_store_mut().insert_rows(rows_to_insert);
 
     Ok(total_rows)
 }
 
 pub(crate) fn handle_delete(
-    db: &mut Database,
-    table_name: &str,
+    catalog: &CatalogStore,
+    table: &mut TableStorage,
+    table_id: TableId,
     predicate: Option<&Expr>,
 ) -> Result<usize, DomainError> {
-    let table_id = db
-        .catalog()
-        .get_table_id(table_name)
-        .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
+    // let table_id = catalog.get_table_id(table_name)?;
 
-    let schema_cols = db
-        .catalog()
-        .get_schema_columns(table_id)
-        .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
+    let schema_cols = catalog.get_schema_columns(table_id)?;
 
     let schema = Schema::new(schema_cols.to_vec())?;
     let columns = schema.columns();
 
-    let table = db.get_table_storage_mut(table_name)?;
+    // let table = catalog.get_table_storage_mut(table_name)?;
 
     let candidate_row_ids: Option<HashSet<RowId>> =
         try_index_scan(table, &schema, predicate).map(|ids| ids.into_iter().collect());
@@ -247,8 +238,9 @@ pub(crate) fn handle_delete(
 }
 
 pub(crate) fn handle_update(
-    db: &mut Database,
-    table_name: &str,
+    catalog: &CatalogStore,
+    table: &mut TableStorage,
+    table_id: TableId,
     assignments: &HashMap<ColumnId, Expr>,
     predicate: Option<&Expr>,
 ) -> Result<usize, DomainError> {
@@ -256,20 +248,14 @@ pub(crate) fn handle_update(
         return Ok(0);
     }
 
-    let table_id = db
-        .catalog()
-        .get_table_id(table_name)
-        .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
+    // let table_id = catalog.get_table_id(table_name)?;
 
-    let schema_cols = db
-        .catalog()
-        .get_schema_columns(table_id)
-        .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
+    let schema_cols = catalog.get_schema_columns(table_id)?;
 
     let schema = Schema::new(schema_cols.to_vec())?;
     let columns = schema.columns();
 
-    let table = db.get_table_storage_mut(table_name)?;
+    // let table = catalog.get_table_storage_mut(table_name)?;
 
     let candidate_row_ids: Option<HashSet<RowId>> =
         try_index_scan(table, &schema, predicate).map(|ids| ids.into_iter().collect());

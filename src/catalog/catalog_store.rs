@@ -2,26 +2,35 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::{
-    Column, ColumnConstraint, ColumnId, DataType, DomainError, Schema, TableId,
+    Column, ColumnConstraint, ColumnId, DataType, DomainError, Schema, TableId, UserManager,
     catalog::id::IdGenerator,
 };
+
+pub const ADMIN: &str = "root";
 
 #[derive(Debug, Default)]
 pub struct CatalogStore {
     id_generator: IdGenerator,
-    table_name_to_id: HashMap<String, TableId>,
-    table_id_to_name: HashMap<TableId, String>,
+
+    // -- USER META --
+    users: UserManager,
+
+    // -- TABLE META --
+    table_to_id: HashMap<String, TableId>,
+    table_to_name: HashMap<TableId, String>,
     table_schemas: HashMap<TableId, Arc<Schema>>,
-    column_name_to_id: HashMap<(TableId, String), ColumnId>,
-    // Mengubah kunci pemetaan menjadi tuple (TableId, ColumnId) agar unik per tabel
-    column_id_to_name: HashMap<(TableId, ColumnId), String>,
-    // Menyimpan penomoran kolom berikutnya untuk setiap tabel (dimulai dari 1)
-    table_next_column_id: HashMap<TableId, u32>,
+
+    // -- COLUMN META --
+    column_to_id: HashMap<(TableId, String), ColumnId>,
+    column_to_name: HashMap<(TableId, ColumnId), String>,
 }
 
 impl CatalogStore {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            users: UserManager::new(),
+            ..Default::default()
+        }
     }
 
     pub fn with_generator(id_generator: IdGenerator) -> Self {
@@ -32,32 +41,32 @@ impl CatalogStore {
     }
 
     #[inline]
-    pub fn get_table_id(&self, name: &str) -> Option<TableId> {
-        self.table_name_to_id.get(&name.to_lowercase()).copied()
+    pub fn get_table_id(&self, name: &str) -> Result<TableId, DomainError> {
+        self.table_to_id
+            .get(name)
+            .copied()
+            .ok_or_else(|| DomainError::TableNotFound(Arc::from(name)))
     }
 
     #[inline]
-    pub fn get_column_id(&self, table_id: TableId, name: &str) -> Option<ColumnId> {
-        self.column_name_to_id
-            .get(&(table_id, name.to_lowercase()))
+    pub fn get_column_id(&self, table_id: TableId, name: &str) -> Result<ColumnId, DomainError> {
+        self.column_to_id
+            .get(&(table_id, name.to_string()))
             .copied()
+            .ok_or_else(|| DomainError::ColumnNotFound(Arc::from(name)))
     }
 
     pub fn register_table(&mut self, name: &str) -> Result<TableId, DomainError> {
-        let name_lower = name.to_lowercase();
-        if self.table_name_to_id.contains_key(&name_lower) {
+        if self.table_to_id.contains_key(name) {
             return Err(DomainError::TableAlreadyExists(Arc::from(name)));
         }
 
         let new_id = self.id_generator.next_table_id();
 
-        self.table_name_to_id.insert(name_lower, new_id);
-        self.table_id_to_name.insert(new_id, name.to_string());
+        self.table_to_id.insert(name.to_string(), new_id);
+        self.table_to_name.insert(new_id, name.to_string());
         self.table_schemas
             .insert(new_id, Arc::new(Schema::default()));
-
-        // Inisialisasi counter kolom untuk tabel baru mulai dari 1
-        self.table_next_column_id.insert(new_id, 1);
 
         Ok(new_id)
     }
@@ -69,7 +78,7 @@ impl CatalogStore {
         sql_type: DataType,
         constraints: Vec<ColumnConstraint>,
     ) -> Result<ColumnId, DomainError> {
-        if let Some(col_id) = self.get_column_id(table_id, name) {
+        if let Ok(col_id) = self.get_column_id(table_id, name) {
             return Ok(col_id);
         }
 
@@ -77,27 +86,15 @@ impl CatalogStore {
             DomainError::TableNotFound(Arc::from(format!("TableId {:?} tidak ditemukan", table_id)))
         })?;
 
-        // Mengambil dan menaikkan ID kolom khusus untuk tabel ini
-        let next_id_u32 = self
-            .table_next_column_id
-            .get_mut(&table_id)
-            .ok_or_else(|| {
-                DomainError::TableNotFound(Arc::from(format!(
-                    "TableId {:?} tidak ditemukan",
-                    table_id
-                )))
-            })?;
-        let col_id = ColumnId(*next_id_u32);
-        *next_id_u32 += 1;
-
+        let col_id = self.id_generator.next_column_id(table_id);
         let new_col_def = Column::with_constraints(col_id, name, sql_type, constraints);
 
         let mut new_schema = (**schema_arc).clone();
         new_schema.add_columns(vec![new_col_def])?;
 
-        self.column_name_to_id
-            .insert((table_id, name.to_lowercase()), col_id);
-        self.column_id_to_name
+        self.column_to_id
+            .insert((table_id, name.to_string()), col_id);
+        self.column_to_name
             .insert((table_id, col_id), name.to_string());
         self.table_schemas.insert(table_id, Arc::new(new_schema));
 
@@ -112,7 +109,7 @@ impl CatalogStore {
         constraints: Vec<ColumnConstraint>,
         index: usize,
     ) -> Result<ColumnId, DomainError> {
-        if let Some(col_id) = self.get_column_id(table_id, name) {
+        if let Ok(col_id) = self.get_column_id(table_id, name) {
             return Ok(col_id);
         }
 
@@ -120,26 +117,15 @@ impl CatalogStore {
             DomainError::TableNotFound(Arc::from(format!("TableId {:?} tidak ditemukan", table_id)))
         })?;
 
-        let next_id_u32 = self
-            .table_next_column_id
-            .get_mut(&table_id)
-            .ok_or_else(|| {
-                DomainError::TableNotFound(Arc::from(format!(
-                    "TableId {:?} tidak ditemukan",
-                    table_id
-                )))
-            })?;
-        let col_id = ColumnId(*next_id_u32);
-        *next_id_u32 += 1;
-
+        let col_id = self.id_generator.next_column_id(table_id);
         let new_col_def = Column::with_constraints(col_id, name, sql_type, constraints);
 
         let mut new_schema = (**schema_arc).clone();
         new_schema.insert_column(index, new_col_def)?;
 
-        self.column_name_to_id
-            .insert((table_id, name.to_lowercase()), col_id);
-        self.column_id_to_name
+        self.column_to_id
+            .insert((table_id, name.to_string()), col_id);
+        self.column_to_name
             .insert((table_id, col_id), name.to_string());
         self.table_schemas.insert(table_id, Arc::new(new_schema));
 
@@ -151,9 +137,7 @@ impl CatalogStore {
         table_id: TableId,
         col_name: &str,
     ) -> Result<ColumnId, DomainError> {
-        let col_id = self.get_column_id(table_id, col_name).ok_or_else(|| {
-            DomainError::eval_error(format!("Kolom '{col_name}' tidak ditemukan"))
-        })?;
+        let col_id = self.get_column_id(table_id, col_name)?;
 
         let schema_arc = self.table_schemas.get(&table_id).ok_or_else(|| {
             DomainError::TableNotFound(Arc::from(format!("TableId {:?} tidak ditemukan", table_id)))
@@ -162,12 +146,39 @@ impl CatalogStore {
         let mut new_schema = (**schema_arc).clone();
         new_schema.remove_column(col_id)?;
 
-        self.column_name_to_id
-            .remove(&(table_id, col_name.to_lowercase()));
-        self.column_id_to_name.remove(&(table_id, col_id));
+        self.column_to_id.remove(&(table_id, col_name.to_string()));
+        self.column_to_name.remove(&(table_id, col_id));
+
+        // Delegasi aturan reset ID kolom ke generator
+        self.id_generator
+            .reset_column_counter_if_empty(table_id, new_schema.columns().is_empty());
+
         self.table_schemas.insert(table_id, Arc::new(new_schema));
 
         Ok(col_id)
+    }
+
+    pub fn unregister_table(&mut self, name: &str) -> Result<TableId, DomainError> {
+        let table_id = self.get_table_id(name)?;
+
+        self.table_to_id.remove(name);
+        self.table_to_name.remove(&table_id);
+
+        // Bersihkan tracking counter kolom tabel tersebut dari generator
+        self.id_generator.remove_table_counter(table_id);
+
+        if let Some(schema) = self.table_schemas.remove(&table_id) {
+            for col in schema.columns() {
+                self.column_to_name.remove(&(table_id, col.id));
+                self.column_to_id.remove(&(table_id, col.name.clone()));
+            }
+        }
+
+        // Delegasi aturan reset ID tabel ke generator jika sudah habis total
+        self.id_generator
+            .reset_table_if_empty(self.table_to_name.is_empty());
+
+        Ok(table_id)
     }
 
     pub fn mutate_column<F>(
@@ -206,12 +217,10 @@ impl CatalogStore {
             }
         };
 
-        if !old_n.eq_ignore_ascii_case(&new_n) {
-            self.column_name_to_id
-                .remove(&(table_id, old_n.to_lowercase()));
-            self.column_name_to_id
-                .insert((table_id, new_n.to_lowercase()), col_id);
-            self.column_id_to_name.insert((table_id, col_id), new_n);
+        if old_n != new_n {
+            self.column_to_id.remove(&(table_id, old_n));
+            self.column_to_id.insert((table_id, new_n.clone()), col_id);
+            self.column_to_name.insert((table_id, col_id), new_n);
         }
 
         self.table_schemas.insert(table_id, Arc::new(new_schema));
@@ -219,20 +228,17 @@ impl CatalogStore {
     }
 
     pub fn rename_table(&mut self, old_name: &str, new_name: &str) -> Result<TableId, DomainError> {
-        let old_name_lower = old_name.to_lowercase();
-        let new_name_lower = new_name.to_lowercase();
-
-        if self.table_name_to_id.contains_key(&new_name_lower) {
+        if self.table_to_id.contains_key(new_name) {
             return Err(DomainError::TableAlreadyExists(Arc::from(new_name)));
         }
 
         let table_id = self
-            .table_name_to_id
-            .remove(&old_name_lower)
+            .table_to_id
+            .remove(old_name)
             .ok_or_else(|| DomainError::TableNotFound(Arc::from(old_name)))?;
 
-        self.table_name_to_id.insert(new_name_lower, table_id);
-        self.table_id_to_name.insert(table_id, new_name.to_string());
+        self.table_to_id.insert(new_name.to_string(), table_id);
+        self.table_to_name.insert(table_id, new_name.to_string());
 
         Ok(table_id)
     }
@@ -245,39 +251,31 @@ impl CatalogStore {
     }
 
     #[inline]
-    pub fn get_schema_columns(&self, table_id: TableId) -> Option<Arc<[Column]>> {
-        self.table_schemas
-            .get(&table_id)
-            .map(|s| Arc::from(s.columns()))
+    pub fn get_schema_columns(&self, table_id: TableId) -> Result<Arc<[Column]>, DomainError> {
+        let schema_arc = self.table_schemas.get(&table_id).ok_or_else(|| {
+            DomainError::TableNotFound(Arc::from(format!("TableId {:?} tidak ditemukan", table_id)))
+        })?;
+        Ok(Arc::from(schema_arc.columns()))
     }
 
     #[inline]
     pub fn list_tables(&self) -> Vec<String> {
-        self.table_id_to_name.values().cloned().collect()
-    }
-
-    pub fn unregister_table(&mut self, name: &str) -> Result<TableId, DomainError> {
-        let table_id = self
-            .get_table_id(name)
-            .ok_or_else(|| DomainError::TableNotFound(Arc::from(name)))?;
-
-        let name_lower = name.to_lowercase();
-        self.table_name_to_id.remove(&name_lower);
-        self.table_id_to_name.remove(&table_id);
-        self.table_next_column_id.remove(&table_id);
-
-        if let Some(schema) = self.table_schemas.remove(&table_id) {
-            for col in schema.columns() {
-                self.column_id_to_name.remove(&(table_id, col.id));
-                self.column_name_to_id
-                    .remove(&(table_id, col.name.to_lowercase()));
-            }
-        }
-
-        Ok(table_id)
+        self.table_to_name.values().cloned().collect()
     }
 
     pub fn update_schema(&mut self, table_id: TableId, new_schema: Schema) {
         self.table_schemas.insert(table_id, Arc::new(new_schema));
+    }
+}
+
+impl CatalogStore {
+    // ==========================================
+    // USER MANAGEMENT
+    // ==========================================
+    pub fn users(&self) -> &UserManager {
+        &self.users
+    }
+    pub fn users_mut(&mut self) -> &mut UserManager {
+        &mut self.users
     }
 }

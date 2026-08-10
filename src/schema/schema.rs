@@ -4,15 +4,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ColumnConstraint, ColumnId, DataType, DomainError, Expr, TableConstraint, ValueType,
+    ColumnConstraint, ColumnId, DataType, DomainError, Expr, Increment, TableConstraint, ValueType,
     schema::Column, validator::validate_enum_variants,
 };
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum AutoIncrement {
-    Enabled { start: i64, step: i64 },
-    Disabled,
-}
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Schema {
@@ -125,7 +119,7 @@ impl Schema {
         let mut seen_names = HashSet::with_capacity(columns.len());
 
         for col in columns {
-            let col_name_lower = col.name.to_lowercase();
+            let col_name_lower = col.name.clone();
 
             validate_enum_variants(&col.sql_type)?;
 
@@ -142,7 +136,7 @@ impl Schema {
             for constraint in &col.constraints {
                 match constraint {
                     ColumnConstraint::Default(_) => default_count += 1,
-                    ColumnConstraint::AutoIncrement(AutoIncrement::Enabled { .. }) => {
+                    ColumnConstraint::Auto(Increment::Enabled { .. }) => {
                         has_auto_increment = true;
                     }
                     _ => {}

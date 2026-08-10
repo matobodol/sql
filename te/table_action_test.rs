@@ -12,14 +12,14 @@ mod tests {
         let mut db = Database::new();
         let create_action = CommandAction::TableAction {
             actions: vec![TableAction::CreateTable {
-                name: "users".to_string(),
+                table_name: "users".to_string(),
                 columns: vec![
                     ("id".to_string(), DataType::Int, vec![]),
                     ("name".to_string(), DataType::Text, vec![]),
                 ],
             }],
         };
-        Database::execute(&mut db, "", create_action).unwrap();
+        Database::execute(&mut db, create_action).unwrap();
         db
     }
 
@@ -35,7 +35,7 @@ mod tests {
 
         let create_action = CommandAction::TableAction {
             actions: vec![TableAction::CreateTable {
-                name: "users".to_string(),
+                table_name: "users".to_string(),
                 columns: vec![
                     ("id".to_string(), DataType::Int, vec![]),
                     ("name".to_string(), DataType::Text, vec![]),
@@ -43,7 +43,8 @@ mod tests {
             }],
         };
 
-        let result = Database::execute(&mut db, "", create_action);
+        // let result = Database::execute(&mut db, "", create_action);
+        let result = Database::execute(&mut db, create_action);
         assert!(result.is_ok());
         assert!(db.catalog().get_table_id("users").is_some());
     }
@@ -55,12 +56,12 @@ mod tests {
 
         let rename_action = CommandAction::TableAction {
             actions: vec![TableAction::RenameTable {
-                old_name: "users".to_string(),
-                new_name: "customers".to_string(),
+                old_table_name: "users".to_string(),
+                new_table_name: "customers".to_string(),
             }],
         };
 
-        let rename_result = Database::execute(&mut db, "", rename_action);
+        let rename_result = Database::execute(&mut db, rename_action);
         assert!(rename_result.is_ok());
         assert!(db.catalog().get_table_id("users").is_none());
         assert!(db.catalog().get_table_id("customers").is_some());
@@ -73,11 +74,11 @@ mod tests {
 
         let drop_action = CommandAction::TableAction {
             actions: vec![TableAction::DropTable {
-                name: "users".to_string(),
+                table_name: "users".to_string(),
             }],
         };
 
-        let drop_result = Database::execute(&mut db, "", drop_action);
+        let drop_result = Database::execute(&mut db, drop_action);
         assert!(drop_result.is_ok());
         assert!(db.catalog().get_table_id("users").is_none());
     }
