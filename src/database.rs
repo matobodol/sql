@@ -4,13 +4,13 @@ use crate::{DomainError, TableId, storage::table_store::TableStorage};
 
 #[derive(Debug, Default)]
 pub struct Database {
-    name: String,
+    // name: String,
     tables: HashMap<TableId, TableStorage>,
 }
 impl Database {
-    pub fn new(name: impl Into<String>) -> Self {
+    pub fn new() -> Self {
         Self {
-            name: name.into(),
+            // name: name.into(),
             tables: HashMap::new(),
         }
     }

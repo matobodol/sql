@@ -20,8 +20,6 @@ fn main() {
 
     system.use_database(mydb).unwrap();
 
-    // let db = system.active_database_mut().unwrap();
-
     let create_table = CommandAction::TableAction {
         actions: vec![TableAction::CreateTable {
             table_name: mytbl.to_string(),
@@ -38,22 +36,19 @@ fn main() {
             ],
         }],
     };
-
-    let insert = DmlAction::Insert {
-        rows: vec![
-            vec![ValueType::Null, ValueType::Text("joni".into())],
-            vec![ValueType::Null, ValueType::Text("jani".into())],
-            vec![ValueType::Null, ValueType::Text("jono".into())],
-        ],
-    };
-
     system.execute(create_table).unwrap();
-    system
-        .execute(CommandAction::DmlAction {
-            table_name: mytbl.to_string(),
-            action: insert,
-        })
-        .unwrap();
+
+    let insert = CommandAction::DmlAction {
+        table_name: mytbl.into(),
+        action: DmlAction::Insert {
+            rows: vec![
+                vec![ValueType::Null, ValueType::Text("joni".into())],
+                vec![ValueType::Null, ValueType::Text("jani".into())],
+                vec![ValueType::Null, ValueType::Text("jono".into())],
+            ],
+        },
+    };
+    system.execute(insert).unwrap();
 
     println!("{:#?}", system);
 }

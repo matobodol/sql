@@ -1,5 +1,5 @@
 use crate::{
-    CommandAction, Database, DomainError, QueryResult, TableId, TableStorage,
+    CommandAction, DomainError, QueryResult, TableId, TableStorage,
     catalog::CatalogStore,
     command::{execute_alter_table, execute_dml_action, execute_table_action},
     dql_action::execute_select,
@@ -7,12 +7,21 @@ use crate::{
 };
 use std::collections::HashMap;
 
+#[derive(Debug, Default)]
+pub struct Database {
+    tables: HashMap<TableId, TableStorage>,
+}
+
+type UserName = String;
+type DatabaseName = String;
+
 #[derive(Debug)]
 pub struct SystemCatalog {
     current_user: Option<String>,
     active_db: Option<String>,
     catalog: CatalogStore,
-    databases: HashMap<(String, String), Database>,
+    // key: (user_name, db_name)
+    databases: HashMap<(UserName, DatabaseName), Database>,
 }
 
 impl SystemCatalog {
@@ -42,7 +51,9 @@ impl SystemCatalog {
             return Err(DomainError::DatabaseAlreadyExists(db_name.into()));
         }
 
-        let db = Database::new(db_name);
+        let db = Database {
+            tables: HashMap::new(),
+        };
         self.databases.insert(composite_key, db);
         Ok(())
     }
@@ -100,6 +111,50 @@ impl SystemCatalog {
         Ok(())
     }
 
+    pub fn rename_database(&mut self, old_name: &str, new_name: &str) -> Result<(), DomainError> {
+        let username = &self.current_username()?.to_lowercase();
+        let user_key = username.to_string();
+        let old_db_key = old_name.to_lowercase();
+        let new_db_key = new_name.to_lowercase();
+
+        // Cek hak akses admin
+        let is_admin = self.catalog.users_mut().is_admin(username)?;
+
+        // Tentukan composite key lama
+        let old_target_key = if is_admin {
+            self.databases
+                .keys()
+                .find(|(_, d)| d == &old_db_key)
+                .cloned()
+                .ok_or_else(|| DomainError::DatabaseNotFound(old_name.into()))?
+        } else {
+            (user_key.clone(), old_db_key)
+        };
+
+        // Tentukan composite key baru (pertahankan owner asli jika admin)
+        let new_target_key = (old_target_key.0.clone(), new_db_key);
+
+        // Pastikan nama database baru belum digunakan
+        if self.databases.contains_key(&new_target_key) {
+            return Err(DomainError::DatabaseAlreadyExists(new_name.into()));
+        }
+
+        // Ambil database dari key lama, lalu masukkan ke key baru
+        let db = self
+            .databases
+            .remove(&old_target_key)
+            .ok_or_else(|| DomainError::DatabaseNotFound(old_name.into()))?;
+
+        self.databases.insert(new_target_key.clone(), db);
+
+        // Jika database yang di-rename sedang aktif, perbarui active_db
+        if self.active_db.as_deref() == Some(&old_target_key.1) {
+            self.active_db = Some(new_target_key.1);
+        }
+
+        Ok(())
+    }
+
     pub fn active_database_mut(&mut self) -> Result<&mut Database, DomainError> {
         let username = &self.current_username()?.to_string();
         let user_key = username.to_string();
@@ -132,10 +187,58 @@ impl SystemCatalog {
     }
 
     pub fn table_mut(&mut self, table_name: &str) -> Result<&mut TableStorage, DomainError> {
-        let table_id = self.catalog.get_table_id(table_name)?;
+        // 1. Batasi scope peminjaman catalog untuk mendapatkan table_id,
+        // sehingga borrow selesai sebelum active_database_mut dipanggil.
+        let table_id = {
+            let catalog = &mut self.catalog;
+            catalog.get_table_id(table_name)?.clone()
+        };
+
+        // 2. Ambil database aktif secara mutabel
         let db = self.active_database_mut()?;
 
-        db.table_mut((table_name, &table_id))
+        // 3. Ambil referensi mutabel ke storage tabel
+        db.tables
+            .get_mut(&table_id)
+            .ok_or_else(|| DomainError::TableNotFound(table_name.into()))
+    }
+
+    fn catalog_and_tables_mut(
+        &mut self,
+    ) -> Result<(&mut CatalogStore, &mut HashMap<TableId, TableStorage>), DomainError> {
+        let username = &self.current_username()?.to_string();
+        let user_key = username.to_string();
+
+        let active_db_name = self
+            .active_db
+            .as_ref()
+            .ok_or(DomainError::NoActiveDatabase)?
+            .clone();
+        let db_key = active_db_name.to_string();
+
+        // Peminjaman catalog sementara untuk cek admin (borrow berakhir di sini)
+        let is_admin = self.catalog.users_mut().is_admin(username)?;
+
+        let target_key = if is_admin {
+            self.databases
+                .keys()
+                .find(|(_, d)| d == &db_key)
+                .cloned()
+                .ok_or_else(|| DomainError::DatabaseNotFound(active_db_name.clone().into()))?
+        } else {
+            (user_key, db_key)
+        };
+
+        // Ambil referensi mutabel ke database dari self.databases
+        let database = self
+            .databases
+            .get_mut(&target_key)
+            .ok_or_else(|| DomainError::DatabaseNotFound(active_db_name.into()))?;
+
+        let tables = &mut database.tables;
+        // Karena self.catalog dan database (bagian dari self.databases) adalah
+        // field yang terpisah (disjoint), Rust mengizinkan keduanya dipinjam bersamaan.
+        Ok((&mut self.catalog, tables))
     }
 }
 
@@ -175,45 +278,6 @@ impl SystemCatalog {
 }
 
 impl SystemCatalog {
-    fn catalog_and_tables_mut(
-        &mut self,
-    ) -> Result<(&mut CatalogStore, &mut HashMap<TableId, TableStorage>), DomainError> {
-        let username = &self.current_username()?.to_string();
-        let user_key = username.to_string();
-
-        let active_db_name = self
-            .active_db
-            .as_ref()
-            .ok_or(DomainError::NoActiveDatabase)?
-            .clone();
-        let db_key = active_db_name.to_string();
-
-        // Peminjaman catalog sementara untuk cek admin (borrow berakhir di sini)
-        let is_admin = self.catalog.users_mut().is_admin(username)?;
-
-        let target_key = if is_admin {
-            self.databases
-                .keys()
-                .find(|(_, d)| d == &db_key)
-                .cloned()
-                .ok_or_else(|| DomainError::DatabaseNotFound(active_db_name.clone().into()))?
-        } else {
-            (user_key, db_key)
-        };
-
-        // Ambil referensi mutabel ke database dari self.databases
-        let database = self
-            .databases
-            .get_mut(&target_key)
-            .ok_or_else(|| DomainError::DatabaseNotFound(active_db_name.into()))?;
-
-        let tables = database.tables_mut();
-
-        // Karena self.catalog dan database (bagian dari self.databases) adalah
-        // field yang terpisah (disjoint), Rust mengizinkan keduanya dipinjam bersamaan.
-        Ok((&mut self.catalog, tables))
-    }
-
     pub fn execute(&mut self, action: CommandAction) -> Result<QueryResult, DomainError> {
         let (catalog, tables) = self.catalog_and_tables_mut()?;
         let list_table = catalog.list_tables();

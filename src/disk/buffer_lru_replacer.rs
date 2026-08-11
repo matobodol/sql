@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 
 pub type FrameId = usize;
 
+#[derive(Debug)]
 pub struct LRUReplacer {
     entries: VecDeque<FrameId>,
 }

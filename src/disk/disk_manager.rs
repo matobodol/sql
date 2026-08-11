@@ -18,6 +18,7 @@ pub enum StorageError {
     PageOutOfBounds(PageId),
 }
 
+#[derive(Debug)]
 pub struct DiskManager {
     file: File,
     num_pages: PageId,

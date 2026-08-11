@@ -3,6 +3,7 @@ use crate::slotted_page::INVALID_PAGE_ID;
 use crate::table_rid::RID;
 use crate::{PageId, SlottedPage, StorageError};
 
+#[derive(Debug)]
 pub struct TableHeap {
     first_page_id: PageId,
 }

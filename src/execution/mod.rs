@@ -7,6 +7,7 @@ pub mod planner;
 pub mod projection;
 pub mod seq_scan;
 pub mod sort;
+pub mod trait_table_reader;
 
 pub use aggregate::{Accumulator, AggregateFunc, AggregateOperator};
 pub use filter::FilterOperator;
@@ -17,3 +18,4 @@ pub use planner::{PhysicalPlanner, SelectStmt};
 pub use projection::ProjectionOperator;
 pub use seq_scan::SeqScanOperator;
 pub use sort::{OrderByExpr, SortOperator, SortOrder};
+pub use trait_table_reader::TableReader;

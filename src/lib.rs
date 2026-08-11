@@ -1,6 +1,6 @@
 pub mod catalog;
 pub mod command;
-pub mod database;
+// pub mod database;
 pub mod disk;
 pub mod error;
 pub mod execution;
@@ -15,9 +15,9 @@ pub mod user_manager;
 pub mod validator;
 
 // Re-exports untuk publik
-pub use catalog::id::{ColumnId, DatabaseId, RowId, TableId, UserId};
+pub use catalog::id::{ColumnId, RowId, TableId};
 pub use command::{ColumnPosition, CommandAction, DdlAction, DmlAction, QueryResult, TableAction};
-pub use database::Database;
+// pub use database::Database;
 pub use disk::*;
 pub use error::DomainError;
 pub use execution::{AggregateFunc, OrderByExpr, SelectStmt, SortOrder};

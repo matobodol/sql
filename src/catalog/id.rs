@@ -12,14 +12,6 @@ pub struct TableId(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[repr(transparent)]
-pub struct DatabaseId(pub u32);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[repr(transparent)]
-pub struct UserId(pub u32);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[repr(transparent)]
 pub struct RowId(pub u64);
 
 impl RowId {
@@ -53,12 +45,6 @@ impl From<u32> for TableId {
         TableId(id)
     }
 }
-impl From<u32> for DatabaseId {
-    #[inline(always)]
-    fn from(id: u32) -> Self {
-        DatabaseId(id)
-    }
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IdGenerator {
@@ -68,16 +54,6 @@ pub struct IdGenerator {
     )]
     table_counter: AtomicU32,
     column_counters: HashMap<TableId, u32>,
-    #[serde(
-        serialize_with = "serialize_atomic_u32",
-        deserialize_with = "deserialize_atomic_u32"
-    )]
-    user_counter: AtomicU32,
-    #[serde(
-        serialize_with = "serialize_atomic_u32",
-        deserialize_with = "deserialize_atomic_u32"
-    )]
-    db_counter: AtomicU32,
     start_value: u32,
 }
 
@@ -86,8 +62,6 @@ impl IdGenerator {
         Self {
             table_counter: AtomicU32::new(start_value),
             column_counters: HashMap::new(),
-            user_counter: AtomicU32::new(start_value),
-            db_counter: AtomicU32::new(start_value),
             start_value,
         }
     }
@@ -112,36 +86,10 @@ impl IdGenerator {
     }
 
     #[inline]
-    pub fn next_user_id(&mut self) -> UserId {
-        let val = self.user_counter.fetch_add(1, Ordering::Relaxed);
-        UserId(u32::try_from(val).expect("User ID overflow: Melebihi batas u32::MAX!"))
-    }
-
-    #[inline]
-    pub fn next_database_id(&mut self) -> DatabaseId {
-        let val = self.db_counter.fetch_add(1, Ordering::Relaxed);
-        DatabaseId(u32::try_from(val).expect("Database ID overflow: Melebihi batas u32::MAX!"))
-    }
-
-    #[inline]
     pub fn reset_table_if_empty(&mut self, is_empty: bool) {
         if is_empty {
             self.table_counter
                 .store(self.start_value, Ordering::Relaxed);
-        }
-    }
-
-    #[inline]
-    pub fn reset_user_if_empty(&mut self, is_empty: bool) {
-        if is_empty {
-            self.user_counter.store(self.start_value, Ordering::Relaxed);
-        }
-    }
-
-    #[inline]
-    pub fn reset_database_if_empty(&mut self, is_empty: bool) {
-        if is_empty {
-            self.db_counter.store(self.start_value, Ordering::Relaxed);
         }
     }
 
