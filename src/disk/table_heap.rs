@@ -1,7 +1,7 @@
 use crate::BufferPoolManager;
 use crate::slotted_page::INVALID_PAGE_ID;
 use crate::table_rid::RID;
-use crate::{PageId, SlottedPage, StorageError};
+use crate::{DomainError, PageId, SlottedPage};
 
 #[derive(Debug)]
 pub struct TableHeap {
@@ -9,7 +9,7 @@ pub struct TableHeap {
 }
 
 impl TableHeap {
-    pub fn new(bpm: &mut BufferPoolManager) -> Result<Self, StorageError> {
+    pub fn new(bpm: &mut BufferPoolManager) -> Result<Self, DomainError> {
         let (first_page_id, page_data) = bpm.new_page()?;
         SlottedPage::init(page_data);
         bpm.unpin_page(first_page_id, true)?;
@@ -21,7 +21,7 @@ impl TableHeap {
         &self,
         bpm: &mut BufferPoolManager,
         tuple_bytes: &[u8],
-    ) -> Result<RID, StorageError> {
+    ) -> Result<RID, DomainError> {
         let mut current_page_id = self.first_page_id;
 
         loop {
@@ -42,7 +42,6 @@ impl TableHeap {
                         bpm.unpin_page(current_page_id, false)?;
 
                         let (new_page_id, new_page_data) = bpm.new_page()?;
-                        // Inisialisasi header SlottedPage dilakukan di sini secara konsisten
                         SlottedPage::init(new_page_data);
 
                         let slot_id = SlottedPage::insert_tuple(new_page_data, tuple_bytes)?;
@@ -59,11 +58,7 @@ impl TableHeap {
         }
     }
 
-    pub fn delete_tuple(
-        &self,
-        bpm: &mut BufferPoolManager,
-        rid: RID,
-    ) -> Result<bool, StorageError> {
+    pub fn delete_tuple(&self, bpm: &mut BufferPoolManager, rid: RID) -> Result<bool, DomainError> {
         let (page_data, _) = bpm.fetch_page(rid.page_id)?;
         let success = SlottedPage::mark_delete(page_data, rid.slot_id);
         bpm.unpin_page(rid.page_id, success)?;
@@ -78,7 +73,7 @@ impl TableHeap {
         self.first_page_id
     }
 
-    pub fn scan_rids(&self, bpm: &mut BufferPoolManager) -> Result<Vec<RID>, StorageError> {
+    pub fn scan_rids(&self, bpm: &mut BufferPoolManager) -> Result<Vec<RID>, DomainError> {
         let mut rids = Vec::new();
         let mut current_page_id = self.first_page_id;
 
@@ -104,7 +99,7 @@ impl TableHeap {
         &self,
         bpm: &mut BufferPoolManager,
         rid: RID,
-    ) -> Result<Option<Vec<u8>>, StorageError> {
+    ) -> Result<Option<Vec<u8>>, DomainError> {
         let (page_data, _) = bpm.fetch_page(rid.page_id)?;
         let tuple_bytes = SlottedPage::get_tuple(page_data, rid.slot_id).map(|b| b.to_vec());
         bpm.unpin_page(rid.page_id, false)?;

@@ -1,8 +1,7 @@
-use crate::{PAGE_SIZE, PageId, StorageError};
+use crate::{DomainError, PAGE_SIZE, PageId};
 
 pub type SlotId = u16;
 
-/// Header Size: next_page_id (4 byte) + num_slots (2 byte) + free_space_pointer (2 byte)
 const HEADER_SIZE: usize = 8;
 const SLOT_SIZE: usize = 4;
 pub const INVALID_PAGE_ID: PageId = u32::MAX;
@@ -10,13 +9,9 @@ pub const INVALID_PAGE_ID: PageId = u32::MAX;
 pub struct SlottedPage;
 
 impl SlottedPage {
-    /// Inisialisasi header pada buffer Page baru yang masih kosong.
     pub fn init(page_data: &mut [u8; PAGE_SIZE]) {
-        // next_page_id = INVALID_PAGE_ID (u32::MAX)
         page_data[0..4].copy_from_slice(&INVALID_PAGE_ID.to_le_bytes());
-        // num_slots = 0
         page_data[4..6].copy_from_slice(&0u16.to_le_bytes());
-        // free_space_pointer = PAGE_SIZE (4096)
         let initial_free_space = PAGE_SIZE as u16;
         page_data[6..8].copy_from_slice(&initial_free_space.to_le_bytes());
     }
@@ -60,12 +55,14 @@ impl SlottedPage {
     pub fn insert_tuple(
         page_data: &mut [u8; PAGE_SIZE],
         tuple_bytes: &[u8],
-    ) -> Result<SlotId, StorageError> {
+    ) -> Result<SlotId, DomainError> {
         let tuple_len = tuple_bytes.len();
         let needed_space = tuple_len + SLOT_SIZE;
 
         if Self::free_space_remaining(page_data) < needed_space {
-            return Err(StorageError::InvalidBufferSize(tuple_len));
+            return Err(DomainError::storage(
+                "Kapasitas halaman tidak mencukupi untuk tuple",
+            ));
         }
 
         let num_slots = Self::num_slots(page_data);
@@ -114,7 +111,6 @@ impl SlottedPage {
         Some(&page_data[tuple_offset..tuple_offset + tuple_size])
     }
 
-    /// Menandai tuple pada slot_id sebagai dihapus (tombstone)
     pub fn mark_delete(page_data: &mut [u8; PAGE_SIZE], slot_id: SlotId) -> bool {
         let num_slots = Self::num_slots(page_data);
         if slot_id >= num_slots {
@@ -122,7 +118,6 @@ impl SlottedPage {
         }
 
         let slot_entry_offset = HEADER_SIZE + (slot_id as usize * SLOT_SIZE);
-        // Set tuple_size (2 byte terakhir slot entry) menjadi 0
         page_data[slot_entry_offset + 2..slot_entry_offset + 4]
             .copy_from_slice(&0u16.to_le_bytes());
         true

@@ -56,9 +56,17 @@ pub enum DomainError {
 
     #[error("{0}")]
     Catalog(Arc<str>),
+
+    #[error("Kesalahan penyimpanan/I/O: {0}")]
+    Storage(Arc<str>),
 }
 
 impl DomainError {
+    #[inline]
+    pub fn storage(msg: impl Into<Arc<str>>) -> Self {
+        Self::Storage(msg.into())
+    }
+
     #[inline]
     pub fn conversion(expected: &'static str, found: &'static str) -> Self {
         Self::Conversion { expected, found }

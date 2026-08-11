@@ -1,4 +1,4 @@
-use crate::StorageError;
+use crate::DomainError;
 use crate::buffer_lru_replacer::{FrameId, LRUReplacer};
 use crate::disk_manager::{DiskManager, PAGE_SIZE, PageId};
 use std::collections::HashMap;
@@ -8,7 +8,7 @@ pub struct BufferPoolManager {
     disk_manager: DiskManager,
     replacer: LRUReplacer,
     page_table: HashMap<PageId, FrameId>,
-    frame_to_page: Vec<Option<PageId>>, // 💡 O(1) Reverse Mapping
+    frame_to_page: Vec<Option<PageId>>,
     pool: Vec<[u8; PAGE_SIZE]>,
     pin_counts: Vec<u32>,
     is_dirty: Vec<bool>,
@@ -37,18 +37,15 @@ impl BufferPoolManager {
     pub fn fetch_page(
         &mut self,
         page_id: PageId,
-    ) -> Result<(&mut [u8; PAGE_SIZE], FrameId), StorageError> {
-        // 1. Hit
+    ) -> Result<(&mut [u8; PAGE_SIZE], FrameId), DomainError> {
         if let Some(&frame_id) = self.page_table.get(&page_id) {
             self.pin_counts[frame_id] += 1;
             self.replacer.pin(frame_id);
             return Ok((&mut self.pool[frame_id], frame_id));
         }
 
-        // 2. Miss -> Eviction Check
         let frame_id = self.find_available_frame()?;
 
-        // O(1) lookup untuk membersihkan frame bekas
         if let Some(old_page_id) = self.frame_to_page[frame_id] {
             if self.is_dirty[frame_id] {
                 self.disk_manager
@@ -58,7 +55,6 @@ impl BufferPoolManager {
             self.page_table.remove(&old_page_id);
         }
 
-        // 3. Load dari disk
         self.disk_manager
             .read_page(page_id, &mut self.pool[frame_id])?;
         self.page_table.insert(page_id, frame_id);
@@ -69,7 +65,7 @@ impl BufferPoolManager {
         Ok((&mut self.pool[frame_id], frame_id))
     }
 
-    pub fn new_page(&mut self) -> Result<(PageId, &mut [u8; PAGE_SIZE]), StorageError> {
+    pub fn new_page(&mut self) -> Result<(PageId, &mut [u8; PAGE_SIZE]), DomainError> {
         let frame_id = self.find_available_frame()?;
         let new_page_id = self.disk_manager.allocate_page()?;
 
@@ -82,7 +78,6 @@ impl BufferPoolManager {
             self.page_table.remove(&old_page_id);
         }
 
-        // Cukup zerofill frame memory mentah
         self.pool[frame_id] = [0u8; PAGE_SIZE];
 
         self.page_table.insert(new_page_id, frame_id);
@@ -94,11 +89,11 @@ impl BufferPoolManager {
         Ok((new_page_id, &mut self.pool[frame_id]))
     }
 
-    pub fn unpin_page(&mut self, page_id: PageId, is_dirty: bool) -> Result<(), StorageError> {
+    pub fn unpin_page(&mut self, page_id: PageId, is_dirty: bool) -> Result<(), DomainError> {
         let &frame_id = self
             .page_table
             .get(&page_id)
-            .ok_or(StorageError::PageOutOfBounds(page_id))?;
+            .ok_or_else(|| DomainError::storage(format!("PageOutOfBounds: {page_id}")))?;
 
         if is_dirty {
             self.is_dirty[frame_id] = true;
@@ -114,7 +109,7 @@ impl BufferPoolManager {
         Ok(())
     }
 
-    pub fn flush_page(&mut self, page_id: PageId) -> Result<(), StorageError> {
+    pub fn flush_page(&mut self, page_id: PageId) -> Result<(), DomainError> {
         if let Some(&frame_id) = self.page_table.get(&page_id) {
             if self.is_dirty[frame_id] {
                 self.disk_manager
@@ -125,7 +120,7 @@ impl BufferPoolManager {
         Ok(())
     }
 
-    pub fn flush_all_pages(&mut self) -> Result<(), StorageError> {
+    pub fn flush_all_pages(&mut self) -> Result<(), DomainError> {
         let page_ids: Vec<PageId> = self.page_table.keys().copied().collect();
         for page_id in page_ids {
             self.flush_page(page_id)?;
@@ -133,13 +128,15 @@ impl BufferPoolManager {
         Ok(())
     }
 
-    fn find_available_frame(&mut self) -> Result<FrameId, StorageError> {
+    fn find_available_frame(&mut self) -> Result<FrameId, DomainError> {
         if let Some(frame_id) = self.free_list.pop() {
             Ok(frame_id)
         } else if let Some(frame_id) = self.replacer.victim() {
             Ok(frame_id)
         } else {
-            Err(StorageError::InvalidBufferSize(0))
+            Err(DomainError::storage(
+                "Buffer pool penuh (invalid buffer size)",
+            ))
         }
     }
 

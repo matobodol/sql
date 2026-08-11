@@ -1,22 +1,10 @@
+use crate::DomainError;
 use std::fs::{File, OpenOptions};
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
-use thiserror::Error;
 
 pub const PAGE_SIZE: usize = 4096;
 pub type PageId = u32;
-
-#[derive(Debug, Error)]
-pub enum StorageError {
-    #[error("Gagal melakukan operasi I/O pada disk: {0}")]
-    IoError(#[from] io::Error),
-
-    #[error("Ukuran buffer ({0} byte) tidak sesuai dengan PAGE_SIZE ({PAGE_SIZE} byte)")]
-    InvalidBufferSize(usize),
-
-    #[error("Mencoba membaca Page ID {0} yang melebihi ukuran file database")]
-    PageOutOfBounds(PageId),
-}
 
 #[derive(Debug)]
 pub struct DiskManager {
@@ -25,21 +13,24 @@ pub struct DiskManager {
 }
 
 impl DiskManager {
-    pub fn new<P: AsRef<Path>>(db_path: P) -> Result<Self, StorageError> {
+    pub fn new<P: AsRef<Path>>(db_path: P) -> Result<Self, DomainError> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
-            .open(db_path)?;
+            .open(db_path)
+            .map_err(|e| DomainError::storage(e.to_string()))?;
 
-        let file_length = file.metadata()?.len();
+        let file_length = file
+            .metadata()
+            .map_err(|e| DomainError::storage(e.to_string()))?
+            .len();
         let num_pages = (file_length / PAGE_SIZE as u64) as PageId;
 
         Ok(Self { file, num_pages })
     }
 
-    /// Alokasikan PageId baru tanpa menulis byte sampah mentah ke disk.
-    pub fn allocate_page(&mut self) -> Result<PageId, StorageError> {
+    pub fn allocate_page(&mut self) -> Result<PageId, DomainError> {
         let new_page_id = self.num_pages;
         self.num_pages += 1;
         Ok(new_page_id)
@@ -49,11 +40,17 @@ impl DiskManager {
         &mut self,
         page_id: PageId,
         page_data: &[u8; PAGE_SIZE],
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), DomainError> {
         let offset = page_id as u64 * PAGE_SIZE as u64;
-        self.file.seek(SeekFrom::Start(offset))?;
-        self.file.write_all(page_data)?;
-        self.file.flush()?;
+        self.file
+            .seek(SeekFrom::Start(offset))
+            .map_err(|e| DomainError::storage(e.to_string()))?;
+        self.file
+            .write_all(page_data)
+            .map_err(|e| DomainError::storage(e.to_string()))?;
+        self.file
+            .flush()
+            .map_err(|e| DomainError::storage(e.to_string()))?;
         Ok(())
     }
 
@@ -61,13 +58,17 @@ impl DiskManager {
         &mut self,
         page_id: PageId,
         page_data: &mut [u8; PAGE_SIZE],
-    ) -> Result<(), StorageError> {
+    ) -> Result<(), DomainError> {
         let offset = page_id as u64 * PAGE_SIZE as u64;
         if page_id >= self.num_pages {
-            return Err(StorageError::PageOutOfBounds(page_id));
+            return Err(DomainError::storage(format!("PageOutOfBounds: {page_id}")));
         }
-        self.file.seek(SeekFrom::Start(offset))?;
-        self.file.read_exact(page_data)?;
+        self.file
+            .seek(SeekFrom::Start(offset))
+            .map_err(|e| DomainError::storage(e.to_string()))?;
+        self.file
+            .read_exact(page_data)
+            .map_err(|e| DomainError::storage(e.to_string()))?;
         Ok(())
     }
 
