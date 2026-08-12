@@ -1,14 +1,16 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use crate::{
-    Column, ColumnConstraint, ColumnId, DataType, DomainError, QueryResult, Row, RowId, Schema,
-    TableId, TableStorage, ValueType, catalog::CatalogStore,
+    BufferPoolManager, Column, ColumnConstraint, ColumnId, DataType, DiskManager, DomainError,
+    QueryResult, Row, RowId, Schema, TableHeap, TableId, ValueType, catalog::CatalogStore,
+    database::TableContext, index::IndexRegistry,
 };
 
 // --- TABLE ACTION
 pub(crate) fn apply_create_table(
     catalog: &mut CatalogStore,
-    tables: &mut HashMap<TableId, TableStorage>,
+    tables: &mut HashMap<TableId, TableContext>,
+    base_path: &str,
     table_name: &str,
     raw_columns: Vec<(String, DataType, Vec<ColumnConstraint>)>,
 ) -> Result<(), DomainError> {
@@ -21,34 +23,70 @@ pub(crate) fn apply_create_table(
         }
     }
 
+    // Inisialisasi file fisik .db khusus untuk tabel baru di dalam folder database terkait
+    let table_file_path = Path::new(base_path).join(format!("{}.db", table_name));
+    let disk_manager = DiskManager::new(&table_file_path)?;
+    let mut buffer_pool_manager = BufferPoolManager::new(disk_manager, 10);
+    let table_heap = TableHeap::new(&mut buffer_pool_manager)?;
+
+    // --- TAMBAHAN: Inisialisasi auto_increment_counters dari Schema tabel baru ---
     let schema = catalog.get_schema(table_id)?;
-    let table_storage = TableStorage::new(table_id, table_name, schema);
-    tables.insert(table_id, table_storage);
+    let mut auto_increment_counters = HashMap::new();
+
+    for col in schema.columns() {
+        if let Some(crate::schema::Increment::Enabled { start, .. }) = col.auto_increment_config() {
+            auto_increment_counters.insert(col.id, *start);
+        }
+    }
+    // -------------------------------------------------------------------------
+
+    tables.insert(
+        table_id,
+        TableContext {
+            table_heap,
+            buffer_pool_manager,
+            index_registry: IndexRegistry::new(),
+            auto_increment_counters, // <-- Masukkan ke TableContext
+        },
+    );
 
     Ok(())
 }
 
 pub(crate) fn apply_drop_table(
     catalog: &mut CatalogStore,
-    tables: &mut HashMap<TableId, TableStorage>,
+    tables: &mut HashMap<TableId, TableContext>,
+    base_path: &str,
     table_name: &str,
 ) -> Result<(), DomainError> {
     let table_id = catalog.unregister_table(table_name)?;
     tables.remove(&table_id);
+
+    // Hapus file fisik .db milik tabel dari disk
+    let table_file_path = Path::new(base_path).join(format!("{}.db", table_name));
+    if table_file_path.exists() {
+        std::fs::remove_file(&table_file_path).map_err(|e| DomainError::storage(e.to_string()))?;
+    }
+
     if catalog.list_tables().is_empty() {}
     Ok(())
 }
 
 pub(crate) fn apply_rename_table(
     catalog: &mut CatalogStore,
-    tables: &mut HashMap<TableId, TableStorage>,
+    base_path: &str,
     old_name: &str,
     new_name: &str,
 ) -> Result<(), DomainError> {
+    #[allow(warnings)]
     let table_id = catalog.rename_table(old_name, new_name)?;
 
-    if let Some(table_storage) = tables.get_mut(&table_id) {
-        table_storage.set_name(new_name);
+    // Ubah nama file fisik .db di disk
+    let old_path = Path::new(base_path).join(format!("{}.db", old_name));
+    let new_path = Path::new(base_path).join(format!("{}.db", new_name));
+
+    if old_path.exists() {
+        std::fs::rename(&old_path, &new_path).map_err(|e| DomainError::storage(e.to_string()))?;
     }
 
     Ok(())
@@ -81,23 +119,22 @@ pub(crate) fn execute_describe_table(columns: &[Column]) -> Result<QueryResult, 
 
     let mut rows = Vec::with_capacity(columns.len());
 
-    // Iterasi kolom dan gunakan method helper dari struct Column
     for (idx, col) in columns.iter().enumerate() {
         let row_id = RowId((idx + 1) as u64);
 
-        // Menentukan apakah kolom boleh bernilai NULL menggunakan is_nullable()[span_5](start_span)[span_5](end_span)
+        // Menentukan apakah kolom boleh bernilai NULL menggunakan is_nullable()[span_1](start_span)[span_1](end_span)
         let null_str = if col.is_nullable() { "YES" } else { "NO" };
 
-        // Menentukan status Primary Key menggunakan is_primary_key()[span_6](start_span)[span_6](end_span)
+        // Menentukan status Primary Key menggunakan is_primary_key()[span_2](start_span)[span_2](end_span)
         let key_str = if col.is_primary_key() { "PRI" } else { "" };
 
-        // Mengambil nilai default menggunakan default_value()[span_7](start_span)[span_7](end_span)
+        // Mengambil nilai default menggunakan default_value()[span_3](start_span)[span_3](end_span)
         let default_str = match col.default_value() {
             Some(val) => format!("{:?}", val),
             None => "NULL".to_string(),
         };
 
-        // Menentukan informasi ekstra (seperti auto_increment) menggunakan is_auto_increment()[span_8](start_span)[span_8](end_span)
+        // Menentukan informasi ekstra (seperti auto_increment) menggunakan is_auto_increment()[span_4](start_span)[span_4](end_span)
         let extra_str = if col.is_auto_increment() {
             "auto_increment"
         } else {
@@ -105,12 +142,12 @@ pub(crate) fn execute_describe_table(columns: &[Column]) -> Result<QueryResult, 
         };
 
         let values = vec![
-            ValueType::Text(Arc::from(col.name.clone())), // Field (menggunakan col.name)
-            ValueType::Text(Arc::from(format!("{:?}", col.sql_type))), // Type (menggunakan col.sql_type)
-            ValueType::Text(Arc::from(null_str)),                      // Null
-            ValueType::Text(Arc::from(key_str)),                       // Key
-            ValueType::Text(Arc::from(default_str)),                   // Default
-            ValueType::Text(Arc::from(extra_str)),                     // Extra
+            ValueType::Text(Arc::from(col.name.clone())), // Field[span_5](start_span)[span_5](end_span)
+            ValueType::Text(Arc::from(format!("{:?}", col.sql_type))), // Type[span_6](start_span)[span_6](end_span)
+            ValueType::Text(Arc::from(null_str)),
+            ValueType::Text(Arc::from(key_str)),
+            ValueType::Text(Arc::from(default_str)),
+            ValueType::Text(Arc::from(extra_str)),
         ];
 
         rows.push(Row::with_id(row_id, values));

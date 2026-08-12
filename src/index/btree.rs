@@ -1,12 +1,14 @@
 use std::collections::BTreeMap;
 use std::ops::Bound;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{DomainError, RowId, ValueType};
 
 use super::traits::Index;
 
 /// Implementasi BTree Index yang dioptimalkan memori dan nol alokasi sementara pada operasi pencarian/penghapusan.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BTreeIndex {
     /// Pemetaan dari `SqlValue` ke kumpulan `RowId`
     map: BTreeMap<ValueType, Vec<RowId>>,

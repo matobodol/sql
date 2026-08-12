@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 use crate::index::index_registry::IndexRegistry;
 use crate::schema::{Increment, Schema};
 use crate::storage::row_store::RowStore;
 use crate::{ColumnId, DomainError, TableId};
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TableStorage {
     // OWNER
     table_id: TableId,

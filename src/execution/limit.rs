@@ -1,7 +1,7 @@
 //! Physical operator untuk mengeksekusi pembatasan jumlah baris data (`LIMIT`) dan `OFFSET`.
 
 use super::operator::PhysicalOperator;
-use crate::{DomainError, Row, Schema};
+use crate::{BufferPoolManager, DomainError, Row, Schema};
 
 pub struct LimitOperator {
     input: Box<dyn PhysicalOperator>,
@@ -31,7 +31,7 @@ impl PhysicalOperator for LimitOperator {
     }
 
     #[inline]
-    fn next(&mut self) -> Result<Option<Row>, DomainError> {
+    fn next(&mut self, bpm: &mut BufferPoolManager) -> Result<Option<Row>, DomainError> {
         if let Some(limit) = self.limit {
             if self.produced >= limit {
                 return Ok(None);
@@ -39,14 +39,14 @@ impl PhysicalOperator for LimitOperator {
         }
 
         while self.skipped < self.offset {
-            if self.input.next()?.is_some() {
+            if self.input.next(bpm)?.is_some() {
                 self.skipped += 1;
             } else {
                 return Ok(None);
             }
         }
 
-        if let Some(row) = self.input.next()? {
+        if let Some(row) = self.input.next(bpm)? {
             self.produced += 1;
             Ok(Some(row))
         } else {

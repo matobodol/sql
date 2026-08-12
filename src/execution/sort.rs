@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::vec::IntoIter;
 
 use super::operator::PhysicalOperator;
-use crate::{DomainError, Expr, Row, Schema, ValueType, expression::eval_expr};
+use crate::{BufferPoolManager, DomainError, Expr, Row, Schema, ValueType, expression::eval_expr};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SortOrder {
@@ -35,20 +35,18 @@ impl SortOperator {
         }
     }
 
-    fn fetch_and_sort(&mut self) -> Result<(), DomainError> {
+    fn fetch_and_sort(&mut self, bpm: &mut BufferPoolManager) -> Result<(), DomainError> {
         let schema = self.input.schema();
 
-        // Pre-bind kriteria pengurutan O(1)
         let mut bound_specs = Vec::with_capacity(self.order_by.len());
         for spec in &self.order_by {
             let bound = bind_expr_columns(&spec.expr, schema)?;
             bound_specs.push((bound, spec.order.clone()));
         }
 
-        // 1. Kumpulkan seluruh baris data & ekstrak sort keys satu kali per baris
         let mut annotated_rows: Vec<(Vec<ValueType>, Row)> = Vec::new();
 
-        while let Some(row) = self.input.next()? {
+        while let Some(row) = self.input.next(bpm)? {
             let mut keys = Vec::with_capacity(bound_specs.len());
             for (expr, _) in &bound_specs {
                 let val = eval_expr(expr, &row)?;
@@ -57,7 +55,6 @@ impl SortOperator {
             annotated_rows.push((keys, row));
         }
 
-        // 2. Sort O(N log N) tanpa re-evaluation
         annotated_rows.sort_by(|(keys_a, _), (keys_b, _)| {
             for (i, (_, order)) in bound_specs.iter().enumerate() {
                 let ord = keys_a[i].cmp(&keys_b[i]);
@@ -84,9 +81,9 @@ impl PhysicalOperator for SortOperator {
     }
 
     #[inline]
-    fn next(&mut self) -> Result<Option<Row>, DomainError> {
+    fn next(&mut self, bpm: &mut BufferPoolManager) -> Result<Option<Row>, DomainError> {
         if self.sorted_rows.is_none() {
-            self.fetch_and_sort()?;
+            self.fetch_and_sort(bpm)?;
         }
 
         if let Some(iter) = &mut self.sorted_rows {

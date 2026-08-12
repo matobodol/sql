@@ -1,9 +1,11 @@
+use serde::{Deserialize, Serialize};
+
 use crate::{Row, RowId, ValueType};
 use std::collections::HashSet;
 use std::sync::Arc;
 
 /// Penyimpanan fisik baris yang terisolasi dengan operasi mutasi berefisiensi tinggi.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RowStore {
     rows: Arc<Vec<Row>>,
     next_row_id: u64,

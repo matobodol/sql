@@ -1,19 +1,18 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
-    Column, ColumnConstraint, ColumnId, DataType, DomainError, Schema, TableId, UserManager,
+    Column, ColumnConstraint, ColumnId, DataType, DomainError, Schema, TableId,
     catalog::id::IdGenerator,
 };
 
 pub const ADMIN: &str = "root";
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct CatalogStore {
     id_generator: IdGenerator,
-
-    // -- USER META --
-    users: UserManager,
 
     // -- TABLE META --
     table_to_id: HashMap<String, TableId>,
@@ -27,10 +26,7 @@ pub struct CatalogStore {
 
 impl CatalogStore {
     pub fn new() -> Self {
-        Self {
-            users: UserManager::new(),
-            ..Default::default()
-        }
+        Self::default()
     }
 
     pub fn with_generator(id_generator: IdGenerator) -> Self {
@@ -46,6 +42,14 @@ impl CatalogStore {
             .get(name)
             .copied()
             .ok_or_else(|| DomainError::TableNotFound(Arc::from(name)))
+    }
+
+    // Tambahkan di impl CatalogStore (catalog_store.rs)
+    #[inline]
+    pub fn get_table_name(&self, table_id: TableId) -> Result<String, DomainError> {
+        self.table_to_name.get(&table_id).cloned().ok_or_else(|| {
+            DomainError::TableNotFound(Arc::from(format!("TableId {:?} tidak ditemukan", table_id)))
+        })
     }
 
     #[inline]
@@ -265,17 +269,5 @@ impl CatalogStore {
 
     pub fn update_schema(&mut self, table_id: TableId, new_schema: Schema) {
         self.table_schemas.insert(table_id, Arc::new(new_schema));
-    }
-}
-
-impl CatalogStore {
-    // ==========================================
-    // USER MANAGEMENT
-    // ==========================================
-    pub fn users(&self) -> &UserManager {
-        &self.users
-    }
-    pub fn users_mut(&mut self) -> &mut UserManager {
-        &mut self.users
     }
 }

@@ -2,13 +2,12 @@ use std::sync::Arc;
 
 use crate::execution::operator::PhysicalOperator;
 use crate::execution::{
-    AggregateOperator, FilterOperator, IndexScanOperator, LimitOperator, ProjectionOperator,
-    SeqScanOperator, SortOperator,
+    AggregateOperator, FilterOperator, LimitOperator, ProjectionOperator, SeqScanOperator,
+    SortOperator,
 };
-use crate::query_logic::dml_action::try_index_scan;
 use crate::{
-    AggregateFunc, Column, ColumnId, DataType, DomainError, Expr, OrderByExpr, Schema,
-    TableStorage, ValueType,
+    AggregateFunc, BufferPoolManager, Column, ColumnId, DataType, DomainError, Expr, OrderByExpr,
+    Schema, TableHeap, ValueType,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -26,26 +25,24 @@ pub struct PhysicalPlanner;
 
 impl PhysicalPlanner {
     pub fn build_plan(
-        table: &TableStorage,
+        table_heap: &TableHeap, // Tetap menggunakan referensi biasa &TableHeap
+        bpm: &mut BufferPoolManager,
         schema: &Schema,
         stmt: &SelectStmt,
     ) -> Result<Box<dyn PhysicalOperator>, DomainError> {
         // ------------------------------------------------------------------
         // LANGKAH 1: Inisialisasi Root Scan Operator (IndexScan vs SeqScan)
         // ------------------------------------------------------------------
-        let (mut plan, is_index_scan): (Box<dyn PhysicalOperator>, bool) =
-            if let Some(candidate_ids) = try_index_scan(table, schema, stmt.selection.as_ref()) {
-                (
-                    Box::new(IndexScanOperator::new(table, schema.clone(), candidate_ids)),
-                    true,
-                )
-            } else {
-                let rows_arc = table.row_store().rows_arc();
-                (
-                    Box::new(SeqScanOperator::new(rows_arc, schema.clone())),
-                    false,
-                )
-            };
+        let is_index_scan = false;
+
+        // Ambil seluruh RID fisik dari table_heap terlebih dahulu
+        let rids = table_heap.scan_rids(bpm)?;
+
+        let mut plan: Box<dyn PhysicalOperator> = Box::new(SeqScanOperator::new(
+            *table_heap, // Dereference dan clone otomatis karena TableHeap mengimplementasikan Copy
+            rids,
+            schema.clone(),
+        ));
 
         // ------------------------------------------------------------------
         // LANGKAH 2: Tumpuk FilterOperator (WHERE) jika bukan index scan murni

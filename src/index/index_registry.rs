@@ -1,12 +1,15 @@
 use super::btree::BTreeIndex;
-use super::traits::Index;
-use crate::{ColumnId, DomainError, RowId, ValueType};
+use crate::{
+    ColumnId, DomainError, RowId, ValueType,
+    index::{Index, traits::IndexImpl},
+};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Registry terpusat yang mengelola seluruh indeks B-Tree pada kolom-kolom tabel.
-#[derive(Debug, Clone, Default)]
+/// Registry terpusat yang mengelola seluruh indeks pada kolom-kolom tabel.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IndexRegistry {
-    indexes: HashMap<ColumnId, Box<dyn Index>>,
+    indexes: HashMap<ColumnId, IndexImpl>,
 }
 
 impl IndexRegistry {
@@ -16,13 +19,11 @@ impl IndexRegistry {
         }
     }
 
-    /// Mengecek apakah registry tidak memiliki indeks sama sekali.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.indexes.is_empty()
     }
 
-    /// Mengembalikan jumlah indeks aktif di dalam registry.
     #[inline]
     pub fn len(&self) -> usize {
         self.indexes.len()
@@ -40,12 +41,12 @@ impl IndexRegistry {
             )));
         }
 
-        let index = BTreeIndex::new(is_unique);
-        self.indexes.insert(col_id, Box::new(index));
+        let btree = BTreeIndex::new(is_unique);
+        self.indexes.insert(col_id, IndexImpl::BTree(btree));
         Ok(())
     }
 
-    pub fn drop_index(&mut self, col_id: ColumnId) -> Option<Box<dyn Index>> {
+    pub fn drop_index(&mut self, col_id: ColumnId) -> Option<IndexImpl> {
         self.indexes.remove(&col_id)
     }
 
@@ -55,11 +56,10 @@ impl IndexRegistry {
     }
 
     #[inline]
-    pub fn get_index(&self, col_id: ColumnId) -> Option<&dyn Index> {
-        self.indexes.get(&col_id).map(|idx| idx.as_ref())
+    pub fn get_index(&self, col_id: ColumnId) -> Option<&IndexImpl> {
+        self.indexes.get(&col_id)
     }
 
-    /// Mendaftarkan entri baru secara Zero-Copy menggunakan referensi borrowed `&SqlValue`.
     pub fn insert_entry_ref(
         &mut self,
         row_id: RowId,
@@ -69,11 +69,18 @@ impl IndexRegistry {
 
         for &(col_id, val) in entries {
             if let Some(index) = self.indexes.get_mut(&col_id) {
-                if let Err(err) = index.insert(val, row_id) {
-                    // Rollback otomatis jika terjadi kegagalan/pelanggaran constraint
+                let res = match index {
+                    IndexImpl::BTree(btree) => btree.insert(val, row_id),
+                };
+
+                if let Err(err) = res {
                     for (rb_col_id, rb_val) in inserted_cols {
                         if let Some(rb_index) = self.indexes.get_mut(&rb_col_id) {
-                            let _ = rb_index.remove(rb_val, row_id);
+                            match rb_index {
+                                IndexImpl::BTree(btree) => {
+                                    let _ = btree.remove(rb_val, row_id);
+                                }
+                            }
                         }
                     }
                     return Err(err);
@@ -85,7 +92,6 @@ impl IndexRegistry {
         Ok(())
     }
 
-    /// Menghapus entri baris dari seluruh indeks secara atomic & zero-allocation.
     pub fn remove_entry_ref(
         &mut self,
         row_id: RowId,
@@ -93,7 +99,9 @@ impl IndexRegistry {
     ) -> Result<(), DomainError> {
         for &(col_id, val) in entries {
             if let Some(index) = self.indexes.get_mut(&col_id) {
-                index.remove(val, row_id)?;
+                match index {
+                    IndexImpl::BTree(btree) => btree.remove(val, row_id)?,
+                }
             }
         }
         Ok(())
@@ -103,10 +111,11 @@ impl IndexRegistry {
         self.indexes.clear();
     }
 
-    /// Mengosongkan entri di seluruh indeks secara in-place tanpa merealokasi Box wrapper.
     pub fn clear_entries(&mut self) {
         for index in self.indexes.values_mut() {
-            index.clear();
+            match index {
+                IndexImpl::BTree(btree) => btree.clear(),
+            }
         }
     }
 }

@@ -1,15 +1,16 @@
 use std::collections::{HashMap, HashSet};
-use std::ops::Bound;
 
 use crate::catalog::CatalogStore;
 use crate::expression::{eval_expr, eval_where};
+use crate::index::{Index, IndexRegistry};
 use crate::validator::validate_row;
-use crate::{BinaryOp, ColumnId, DomainError, Expr, Increment, RowId, Schema, ValueType};
-use crate::{TableId, TableStorage};
+use crate::{BinaryOp, ColumnId, DomainError, Expr, RowId, Schema, ValueType};
+use crate::{BufferPoolManager, RID, Row, TableHeap, TableId};
 
 struct StagedUpdate {
+    #[allow(warnings)]
     row_idx: usize,
-    row_id: RowId,
+    rid: RID,
     old_entries: Vec<(ColumnId, ValueType)>,
     new_entries: Vec<(ColumnId, ValueType)>,
     new_row_values: Vec<ValueType>,
@@ -17,7 +18,10 @@ struct StagedUpdate {
 
 pub(crate) fn handle_insert(
     catalog: &CatalogStore,
-    table_storage: &mut TableStorage,
+    table_heap: &mut TableHeap,
+    bpm: &mut BufferPoolManager,
+    index_registry: &mut IndexRegistry,
+    auto_increment_counters: &mut HashMap<ColumnId, i64>,
     table_id: TableId,
     raw_rows: Vec<Vec<ValueType>>,
 ) -> Result<usize, DomainError> {
@@ -25,52 +29,36 @@ pub(crate) fn handle_insert(
         return Ok(0);
     }
 
-    // let table_id = catalog.get_table_id(table_name)?;
-
-    // O(1) Zero-Allocation Fetch: Mengambil Arc<Schema> langsung dari CatalogStore
     let schema = catalog.get_schema(table_id)?;
     let columns = schema.columns();
     let total_rows = raw_rows.len();
 
-    // let table = catalog.get_table_storage_mut(table_name)?;
-
-    // Identifikasi kolom berindeks untuk penyaringan alokasi entri indeks secara selektif
+    // Identifikasi kolom yang memiliki indeks
     let indexed_col_indices: Vec<(usize, ColumnId)> = columns
         .iter()
         .enumerate()
-        .filter(|(_, col)| table_storage.index_registry().has_index(col.id))
+        .filter(|(_, col)| index_registry.has_index(col.id))
         .map(|(idx, col)| (idx, col.id))
         .collect();
 
     struct StagedRow {
-        assigned_row_id: RowId,
         prepared_values: Vec<ValueType>,
         index_entries: Vec<(ColumnId, ValueType)>,
     }
 
     let mut staged_rows = Vec::with_capacity(total_rows);
-    let mut staged_counters = table_storage.auto_increment_counters().clone();
-    let next_start_id = table_storage.row_store().next_row_id();
-
-    for (offset, mut row_values) in raw_rows.into_iter().enumerate() {
+    for mut row_values in raw_rows {
         if row_values.len() < columns.len() {
             row_values.resize(columns.len(), ValueType::Null);
         }
 
         for (i, col) in columns.iter().enumerate() {
             let is_null = row_values[i].is_null();
-
             if col.is_auto_increment() && is_null {
-                let counter = staged_counters.get_mut(&col.id).ok_or_else(|| {
-                    DomainError::exec_error("Counter auto-increment harus terinisialisasi")
-                })?;
-
+                // UBAH `staged_counters` MENJADI `auto_increment_counters` yang dikirim dari TableContext
+                let counter = auto_increment_counters.entry(col.id).or_insert(1);
                 row_values[i] = ValueType::Int(*counter);
-                let step = match col.auto_increment_config() {
-                    Some(Increment::Enabled { step, .. }) => *step,
-                    _ => 1,
-                };
-                *counter += step;
+                *counter += 1;
             } else if is_null {
                 if let Some(default_val) = col.default_value() {
                     row_values[i] = default_val.clone();
@@ -78,7 +66,6 @@ pub(crate) fn handle_insert(
             }
         }
 
-        // Memanggil validate_row yang sudah dioptimasi dengan Fast-Path CHECK constraint
         validate_row(&schema, &row_values)?;
 
         let index_entries: Vec<(ColumnId, ValueType)> = indexed_col_indices
@@ -86,112 +73,106 @@ pub(crate) fn handle_insert(
             .map(|&(c_idx, col_id)| (col_id, row_values[c_idx].clone()))
             .collect();
 
-        let assigned_row_id = RowId::from(next_start_id + offset as u64);
-
         staged_rows.push(StagedRow {
-            assigned_row_id,
             prepared_values: row_values,
             index_entries,
         });
     }
 
-    // Komit transaksional ke Indeks B-Tree
+    // Lakukan commit ke TableHeap satu per satu, lalu daftarkan ke Indeks B-Tree
+    let mut inserted_rids = Vec::with_capacity(total_rows);
+
     for (offset, staged) in staged_rows.iter().enumerate() {
+        let row_bytes = bincode::serialize(&staged.prepared_values)
+            .map_err(|e| DomainError::storage(e.to_string()))?;
+
+        // Simpan ke halaman fisik disk via TableHeap
+        let rid = table_heap.insert_tuple(bpm, &row_bytes)?;
+        inserted_rids.push((rid, &staged.index_entries));
+
         let entries_ref: Vec<(ColumnId, &ValueType)> = staged
             .index_entries
             .iter()
             .map(|(col_id, val)| (*col_id, val))
             .collect();
 
-        if let Err(err) = table_storage
-            .index_registry_mut()
-            .insert_entry_ref(staged.assigned_row_id, &entries_ref)
-        {
-            // Rollback entri indeks jika terjadi kegagalan unik/kunci
-            for rb_staged in staged_rows[..offset].iter() {
-                let rb_entries_ref: Vec<(ColumnId, &ValueType)> = rb_staged
-                    .index_entries
+        // Masukkan ke B-Tree Index menggunakan RowId yang merepresentasikan RID (slot_id)
+        let row_id_alias = RowId(rid.slot_id as u64);
+        if let Err(err) = index_registry.insert_entry_ref(row_id_alias, &entries_ref) {
+            // Rollback indeks dan hapus tuple fisik yang sudah terlanjur masuk jika terjadi pelanggaran unik
+            for (rb_rid, rb_entries) in inserted_rids[..offset].iter() {
+                let rb_entries_ref: Vec<(ColumnId, &ValueType)> = rb_entries
                     .iter()
                     .map(|(col_id, val)| (*col_id, val))
                     .collect();
-
-                let _ = table_storage
-                    .index_registry_mut()
-                    .remove_entry_ref(rb_staged.assigned_row_id, &rb_entries_ref);
+                let _ =
+                    index_registry.remove_entry_ref(RowId(rb_rid.slot_id as u64), &rb_entries_ref);
+                let _ = table_heap.delete_tuple(bpm, *rb_rid);
             }
+            let _ = table_heap.delete_tuple(bpm, rid);
             return Err(err);
         }
     }
-
-    *table_storage.auto_increment_counters_mut() = staged_counters;
-
-    let rows_to_insert: Vec<Vec<ValueType>> = staged_rows
-        .into_iter()
-        .map(|staged| staged.prepared_values)
-        .collect();
-
-    table_storage.row_store_mut().insert_rows(rows_to_insert);
 
     Ok(total_rows)
 }
 
 pub(crate) fn handle_delete(
     catalog: &CatalogStore,
-    table: &mut TableStorage,
+    table_heap: &mut TableHeap,
+    bpm: &mut BufferPoolManager,
+    index_registry: &mut IndexRegistry,
     table_id: TableId,
     predicate: Option<&Expr>,
 ) -> Result<usize, DomainError> {
-    // let table_id = catalog.get_table_id(table_name)?;
-
     let schema_cols = catalog.get_schema_columns(table_id)?;
-
     let schema = Schema::new(schema_cols.to_vec())?;
     let columns = schema.columns();
 
-    // let table = catalog.get_table_storage_mut(table_name)?;
-
-    let candidate_row_ids: Option<HashSet<RowId>> =
-        try_index_scan(table, &schema, predicate).map(|ids| ids.into_iter().collect());
+    // Coba optimasi pencarian menggunakan Index Scan jika predikat mendukung
+    let candidate_rids: Option<HashSet<RID>> = try_index_scan(index_registry, &schema, predicate)
+        .map(|ids| ids.into_iter().map(|id| RID::from(id)).collect()); // Sesuaikan mapping RID Anda
 
     let indexed_col_indices: Vec<(usize, ColumnId)> = columns
         .iter()
         .enumerate()
-        .filter(|(_, col)| table.index_registry().has_index(col.id))
+        .filter(|(_, col)| index_registry.has_index(col.id))
         .map(|(idx, col)| (idx, col.id))
         .collect();
 
     struct StagedDelete {
-        row_idx: usize,
-        row_id: RowId,
+        rid: RID,
         index_entries: Vec<(ColumnId, ValueType)>,
     }
 
     let mut staged_deletes = Vec::new();
+    let rids = table_heap.scan_rids(bpm)?;
 
-    for (idx, row) in table.row_store().rows().iter().enumerate() {
-        if let Some(ref valid_ids) = candidate_row_ids {
-            if !valid_ids.contains(&row.id()) {
+    for rid in rids {
+        if let Some(ref valid_rids) = candidate_rids {
+            if !valid_rids.contains(&rid) {
                 continue;
             }
         }
 
-        let matches_condition = match predicate {
-            Some(expr) => eval_where(expr, row)?,
-            None => true,
-        };
+        if let Some(tuple_bytes) = table_heap.get_tuple(bpm, rid)? {
+            let row_values: Vec<ValueType> = bincode::deserialize(&tuple_bytes)
+                .map_err(|e| DomainError::storage(e.to_string()))?;
+            let row = Row::with_id(RowId(rid.slot_id as u64), row_values);
 
-        if matches_condition {
-            let row_id = row.id();
-            let index_entries: Vec<(ColumnId, ValueType)> = indexed_col_indices
-                .iter()
-                .map(|&(c_idx, col_id)| (col_id, row.values()[c_idx].clone()))
-                .collect();
+            let matches_condition = match predicate {
+                Some(expr) => eval_where(expr, &row)?,
+                None => true,
+            };
 
-            staged_deletes.push(StagedDelete {
-                row_idx: idx,
-                row_id,
-                index_entries,
-            });
+            if matches_condition {
+                let index_entries: Vec<(ColumnId, ValueType)> = indexed_col_indices
+                    .iter()
+                    .map(|&(c_idx, col_id)| (col_id, row.values()[c_idx].clone()))
+                    .collect();
+
+                staged_deletes.push(StagedDelete { rid, index_entries });
+            }
         }
     }
 
@@ -208,38 +189,32 @@ pub(crate) fn handle_delete(
             .map(|(col_id, val)| (*col_id, val))
             .collect();
 
-        if let Err(err) = table
-            .index_registry_mut()
-            .remove_entry_ref(staged.row_id, &entries_ref)
-        {
+        let row_id_alias = RowId(staged.rid.slot_id as u64);
+        if let Err(err) = index_registry.remove_entry_ref(row_id_alias, &entries_ref) {
             for rb_staged in staged_deletes[..removed_count].iter().rev() {
                 let rb_entries_ref: Vec<(ColumnId, &ValueType)> = rb_staged
                     .index_entries
                     .iter()
                     .map(|(col_id, val)| (*col_id, val))
                     .collect();
-
-                let _ = table
-                    .index_registry_mut()
-                    .insert_entry_ref(rb_staged.row_id, &rb_entries_ref);
+                let _ = index_registry
+                    .insert_entry_ref(RowId(rb_staged.rid.slot_id as u64), &rb_entries_ref);
             }
             return Err(err);
         }
+
+        table_heap.delete_tuple(bpm, staged.rid)?;
         removed_count += 1;
     }
 
-    let deleted_count = staged_deletes.len();
-    let indices_to_delete: Vec<usize> = staged_deletes.into_iter().map(|s| s.row_idx).collect();
-    table
-        .row_store_mut()
-        .delete_rows_by_indices(indices_to_delete);
-
-    Ok(deleted_count)
+    Ok(staged_deletes.len())
 }
 
 pub(crate) fn handle_update(
     catalog: &CatalogStore,
-    table: &mut TableStorage,
+    table_heap: &mut TableHeap,
+    bpm: &mut BufferPoolManager,
+    index_registry: &mut IndexRegistry,
     table_id: TableId,
     assignments: &HashMap<ColumnId, Expr>,
     predicate: Option<&Expr>,
@@ -248,79 +223,79 @@ pub(crate) fn handle_update(
         return Ok(0);
     }
 
-    // let table_id = catalog.get_table_id(table_name)?;
-
     let schema_cols = catalog.get_schema_columns(table_id)?;
-
     let schema = Schema::new(schema_cols.to_vec())?;
     let columns = schema.columns();
 
-    // let table = catalog.get_table_storage_mut(table_name)?;
-
-    let candidate_row_ids: Option<HashSet<RowId>> =
-        try_index_scan(table, &schema, predicate).map(|ids| ids.into_iter().collect());
+    let candidate_rids: Option<HashSet<RID>> = try_index_scan(index_registry, &schema, predicate)
+        .map(|ids| ids.into_iter().map(|id| RID::from(id)).collect());
 
     let indexed_col_indices: Vec<(usize, ColumnId)> = columns
         .iter()
         .enumerate()
-        .filter(|(_, col)| table.index_registry().has_index(col.id))
+        .filter(|(_, col)| index_registry.has_index(col.id))
         .map(|(idx, col)| (idx, col.id))
         .collect();
 
     let mut staged_updates = Vec::new();
+    let rids = table_heap.scan_rids(bpm)?;
 
-    for (idx, row) in table.row_store().rows().iter().enumerate() {
-        if let Some(ref valid_ids) = candidate_row_ids {
-            if !valid_ids.contains(&row.id()) {
+    for rid in rids {
+        if let Some(ref valid_rids) = candidate_rids {
+            if !valid_rids.contains(&rid) {
                 continue;
             }
         }
 
-        let matches_condition = match predicate {
-            Some(expr) => eval_where(expr, row)?,
-            None => true,
-        };
+        if let Some(tuple_bytes) = table_heap.get_tuple(bpm, rid)? {
+            let mut row_values: Vec<ValueType> = bincode::deserialize(&tuple_bytes)
+                .map_err(|e| DomainError::storage(e.to_string()))?;
+            let row = Row::with_id(RowId(rid.slot_id as u64), row_values.clone());
 
-        if matches_condition {
-            let row_id = row.id();
-            let mut new_values = row.values().to_vec();
-            let mut is_changed = false;
+            let matches_condition = match predicate {
+                Some(expr) => eval_where(expr, &row)?,
+                None => true,
+            };
 
-            for (col_idx, col) in columns.iter().enumerate() {
-                if let Some(new_expr) = assignments.get(&col.id) {
-                    let evaluated_cow = eval_expr(new_expr, row)?;
-                    let evaluated_val = evaluated_cow.into_owned();
+            if matches_condition {
+                let mut is_changed = false;
 
-                    if evaluated_val != new_values[col_idx] {
-                        new_values[col_idx] = evaluated_val;
-                        is_changed = true;
+                for (col_idx, col) in columns.iter().enumerate() {
+                    if let Some(new_expr) = assignments.get(&col.id) {
+                        let evaluated_cow = eval_expr(new_expr, &row)?;
+                        let evaluated_val = evaluated_cow.into_owned();
+
+                        if evaluated_val != row_values[col_idx] {
+                            row_values[col_idx] = evaluated_val;
+                            is_changed = true;
+                        }
                     }
                 }
+
+                if !is_changed {
+                    continue;
+                }
+
+                validate_row(&schema, &row_values)?;
+
+                let old_entries: Vec<(ColumnId, ValueType)> = indexed_col_indices
+                    .iter()
+                    .map(|&(c_idx, col_id)| (col_id, row.values()[c_idx].clone()))
+                    .collect();
+
+                let new_entries: Vec<(ColumnId, ValueType)> = indexed_col_indices
+                    .iter()
+                    .map(|&(c_idx, col_id)| (col_id, row_values[c_idx].clone()))
+                    .collect();
+
+                staged_updates.push(StagedUpdate {
+                    row_idx: 0,
+                    rid,
+                    old_entries,
+                    new_entries,
+                    new_row_values: row_values,
+                });
             }
-
-            if !is_changed {
-                continue;
-            }
-
-            validate_row(&schema, &new_values)?;
-
-            let old_entries: Vec<(ColumnId, ValueType)> = indexed_col_indices
-                .iter()
-                .map(|&(c_idx, col_id)| (col_id, row.values()[c_idx].clone()))
-                .collect();
-
-            let new_entries: Vec<(ColumnId, ValueType)> = indexed_col_indices
-                .iter()
-                .map(|&(c_idx, col_id)| (col_id, new_values[c_idx].clone()))
-                .collect();
-
-            staged_updates.push(StagedUpdate {
-                row_idx: idx,
-                row_id,
-                old_entries,
-                new_entries,
-                new_row_values: new_values,
-            });
         }
     }
 
@@ -336,76 +311,58 @@ pub(crate) fn handle_update(
             .iter()
             .map(|(col_id, val)| (*col_id, val))
             .collect();
-
         let new_entries_ref: Vec<(ColumnId, &ValueType)> = staged
             .new_entries
             .iter()
             .map(|(col_id, val)| (*col_id, val))
             .collect();
 
-        if let Err(err) = table
-            .index_registry_mut()
-            .remove_entry_ref(staged.row_id, &old_entries_ref)
-        {
-            rollback_index_changes(table, &staged_updates[..modified_count]);
+        let row_id_alias = RowId(staged.rid.slot_id as u64);
+
+        if let Err(err) = index_registry.remove_entry_ref(row_id_alias, &old_entries_ref) {
+            rollback_index_changes(index_registry, &staged_updates[..modified_count]);
             return Err(err);
         }
 
-        if let Err(err) = table
-            .index_registry_mut()
-            .insert_entry_ref(staged.row_id, &new_entries_ref)
-        {
-            let _ = table
-                .index_registry_mut()
-                .insert_entry_ref(staged.row_id, &old_entries_ref);
-            rollback_index_changes(table, &staged_updates[..modified_count]);
+        if let Err(err) = index_registry.insert_entry_ref(row_id_alias, &new_entries_ref) {
+            let _ = index_registry.insert_entry_ref(row_id_alias, &old_entries_ref);
+            rollback_index_changes(index_registry, &staged_updates[..modified_count]);
             return Err(err);
         }
+
+        // Perbarui data fisik di TableHeap
+        table_heap.delete_tuple(bpm, staged.rid)?;
+        let new_bytes = bincode::serialize(&staged.new_row_values)
+            .map_err(|e| DomainError::storage(e.to_string()))?;
+        table_heap.insert_tuple(bpm, &new_bytes)?;
 
         modified_count += 1;
     }
 
-    let updated_count = staged_updates.len();
-    let updates: Vec<(usize, crate::Row)> = staged_updates
-        .into_iter()
-        .map(|staged| {
-            (
-                staged.row_idx,
-                crate::Row::with_id(staged.row_id, staged.new_row_values),
-            )
-        })
-        .collect();
-
-    table.row_store_mut().update_rows_by_indices(updates);
-
-    Ok(updated_count)
+    Ok(staged_updates.len())
 }
 
-fn rollback_index_changes(table: &mut TableStorage, processed_updates: &[StagedUpdate]) {
+fn rollback_index_changes(index_registry: &mut IndexRegistry, processed_updates: &[StagedUpdate]) {
     for staged in processed_updates.iter().rev() {
         let old_entries_ref: Vec<(ColumnId, &ValueType)> = staged
             .old_entries
             .iter()
             .map(|(col_id, val)| (*col_id, val))
             .collect();
-
         let new_entries_ref: Vec<(ColumnId, &ValueType)> = staged
             .new_entries
             .iter()
             .map(|(col_id, val)| (*col_id, val))
             .collect();
 
-        let _ = table
-            .index_registry_mut()
-            .remove_entry_ref(staged.row_id, &new_entries_ref);
-        let _ = table
-            .index_registry_mut()
-            .insert_entry_ref(staged.row_id, &old_entries_ref);
+        let row_id_alias = RowId(staged.rid.slot_id as u64);
+        let _ = index_registry.remove_entry_ref(row_id_alias, &new_entries_ref);
+        let _ = index_registry.insert_entry_ref(row_id_alias, &old_entries_ref);
     }
 }
 
 pub(crate) fn try_index_scan(
-    table: &TableStorage,
+    index_registry: &IndexRegistry,
     schema: &Schema,
     predicate: Option<&Expr>,
 ) -> Option<Vec<RowId>> {
@@ -419,70 +376,13 @@ pub(crate) fn try_index_scan(
         } => {
             if let (Expr::Column(col_name), Expr::Literal(val)) = (left.as_ref(), right.as_ref()) {
                 if let Some(col_id) = schema.get_column_by_name(col_name).map(|c| c.id) {
-                    let index = table.index_registry().get_index(col_id)?;
-                    return Some(index.lookup(val).to_vec());
-                }
-            }
-            if let (Expr::Literal(val), Expr::Column(col_name)) = (left.as_ref(), right.as_ref()) {
-                if let Some(col_id) = schema.get_column_by_name(col_name).map(|c| c.id) {
-                    let index = table.index_registry().get_index(col_id)?;
-                    return Some(index.lookup(val).to_vec());
-                }
-            }
-            None
-        }
-
-        Expr::Binary { left, op, right } if *op == BinaryOp::Gt || *op == BinaryOp::GtEq => {
-            if let (Expr::Column(col_name), Expr::Literal(val)) = (left.as_ref(), right.as_ref()) {
-                if let Some(col_id) = schema.get_column_by_name(col_name).map(|c| c.id) {
-                    let index = table.index_registry().get_index(col_id)?;
-                    let min_bound = if *op == BinaryOp::Gt {
-                        Bound::Excluded(val)
-                    } else {
-                        Bound::Included(val)
-                    };
-                    return Some(index.range_lookup(min_bound, Bound::Unbounded));
-                }
-            }
-            None
-        }
-
-        Expr::Binary { left, op, right } if *op == BinaryOp::Lt || *op == BinaryOp::LtEq => {
-            if let (Expr::Column(col_name), Expr::Literal(val)) = (left.as_ref(), right.as_ref()) {
-                if let Some(col_id) = schema.get_column_by_name(col_name).map(|c| c.id) {
-                    let index = table.index_registry().get_index(col_id)?;
-                    let max_bound = if *op == BinaryOp::Lt {
-                        Bound::Excluded(val)
-                    } else {
-                        Bound::Included(val)
-                    };
-                    return Some(index.range_lookup(Bound::Unbounded, max_bound));
-                }
-            }
-            None
-        }
-
-        Expr::InList { expr, list } => {
-            if let Expr::Column(col_name) = expr.as_ref() {
-                if let Some(col_id) = schema.get_column_by_name(col_name).map(|c| c.id) {
-                    let index = table.index_registry().get_index(col_id)?;
-                    let mut matched_row_ids = HashSet::new();
-
-                    for item in list {
-                        if let Expr::Literal(val) = item {
-                            for &row_id in index.lookup(val) {
-                                matched_row_ids.insert(row_id);
-                            }
-                        } else {
-                            return None;
-                        }
+                    if let Some(index_impl) = index_registry.get_index(col_id) {
+                        return Some(index_impl.lookup(val).to_vec());
                     }
-                    return Some(matched_row_ids.into_iter().collect());
                 }
             }
             None
         }
-
         _ => None,
     }
 }

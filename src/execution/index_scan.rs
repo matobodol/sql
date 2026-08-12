@@ -1,7 +1,6 @@
 //! Physical operator untuk pemindaian berbasis indeks (*Index Scan*).
 
-use crate::{DomainError, Row, RowId, Schema, TableStorage, execution::operator::PhysicalOperator};
-use std::collections::HashSet;
+use crate::{BufferPoolManager, DomainError, Row, Schema, execution::operator::PhysicalOperator};
 
 pub struct IndexScanOperator {
     matching_rows: Vec<Row>,
@@ -10,17 +9,7 @@ pub struct IndexScanOperator {
 }
 
 impl IndexScanOperator {
-    pub fn new(table: &TableStorage, schema: Schema, target_row_ids: Vec<RowId>) -> Self {
-        let valid_ids: HashSet<RowId> = target_row_ids.into_iter().collect();
-
-        let matching_rows: Vec<Row> = table
-            .row_store()
-            .rows()
-            .iter()
-            .filter(|row| valid_ids.contains(&row.id()))
-            .cloned()
-            .collect();
-
+    pub fn new(schema: Schema, matching_rows: Vec<Row>) -> Self {
         Self {
             matching_rows,
             cursor: 0,
@@ -36,7 +25,10 @@ impl PhysicalOperator for IndexScanOperator {
     }
 
     #[inline]
-    fn next(&mut self) -> Result<Option<Row>, DomainError> {
+    fn next(&mut self, bpm: &mut BufferPoolManager) -> Result<Option<Row>, DomainError> {
+        // Parameter bpm disertakan sesuai kontrak trait PhysicalOperator
+        let _ = bpm;
+
         // Optimasi: Single-pass bounds check menggunakan `.get()`
         if let Some(row) = self.matching_rows.get(self.cursor) {
             self.cursor += 1;

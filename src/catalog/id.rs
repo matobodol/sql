@@ -45,6 +45,12 @@ impl From<u32> for TableId {
         TableId(id)
     }
 }
+impl From<TableId> for u32 {
+    #[inline(always)]
+    fn from(id: TableId) -> Self {
+        id.0
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IdGenerator {

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::vec::IntoIter;
 
 use crate::execution::operator::PhysicalOperator;
-use crate::{ColumnId, DomainError, Row, RowId, Schema, ValueType};
+use crate::{BufferPoolManager, ColumnId, DomainError, Row, RowId, Schema, ValueType};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AggregateFunc {
@@ -116,7 +116,7 @@ impl AggregateOperator {
         }
     }
 
-    fn fetch_and_aggregate(&mut self) -> Result<(), DomainError> {
+    fn fetch_and_aggregate(&mut self, bpm: &mut BufferPoolManager) -> Result<(), DomainError> {
         let child_schema = self.input.schema();
 
         let mut group_indices = Vec::with_capacity(self.group_by_cols.len());
@@ -148,7 +148,7 @@ impl AggregateOperator {
         let mut groups: HashMap<Vec<ValueType>, Vec<Accumulator>> = HashMap::new();
         let count_star_dummy = ValueType::Int(1);
 
-        while let Some(row) = self.input.next()? {
+        while let Some(row) = self.input.next(bpm)? {
             let group_key: Vec<ValueType> =
                 group_indices.iter().map(|&idx| row[idx].clone()).collect();
 
@@ -186,9 +186,9 @@ impl PhysicalOperator for AggregateOperator {
     }
 
     #[inline]
-    fn next(&mut self) -> Result<Option<Row>, DomainError> {
+    fn next(&mut self, bpm: &mut BufferPoolManager) -> Result<Option<Row>, DomainError> {
         if self.aggregated_rows.is_none() {
-            self.fetch_and_aggregate()?;
+            self.fetch_and_aggregate(bpm)?;
         }
 
         if let Some(iter) = &mut self.aggregated_rows {

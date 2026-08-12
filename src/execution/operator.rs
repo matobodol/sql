@@ -1,17 +1,12 @@
-//! Kontrak trait utama untuk Physical Execution Operators berbasis Volcano Iterator Model.
+//! Kontrak trait utama untuk Physical Execution Operators berbasis Volcano Iterator Model[span_4](start_span)[span_4](end_span).
 
-use crate::{DomainError, Row, Schema};
+use crate::{BufferPoolManager, DomainError, Row, Schema};
 
-/// Trait utama untuk semua Physical Operator dalam pipeline eksekusi query engine.
+/// Trait utama untuk semua Physical Operator dalam pipeline eksekusi query engine[span_5](start_span)[span_5](end_span).
 pub trait PhysicalOperator {
-    /// Mengembalikan skema (`Schema`) dari baris data yang dihasilkan oleh operator ini.
+    /// Mengembalikan skema (`Schema`) dari baris data yang dihasilkan oleh operator ini[span_6](start_span)[span_6](end_span).
     fn schema(&self) -> &Schema;
 
-    /// Mengambil baris data (`Row`) berikutnya dari input stream.
-    ///
-    /// # Nilai Kembalian
-    /// * `Ok(Some(Row))` - Baris data berikutnya berhasil diproses.
-    /// * `Ok(None)` - Stream data telah mencapai End-of-Stream (EOS).
-    /// * `Err(DomainError)` - Terjadi kesalahan evaluasi/IO.
-    fn next(&mut self) -> Result<Option<Row>, DomainError>;
+    /// Mengambil baris data (`Row`) berikutnya dari input stream menggunakan BufferPoolManager.
+    fn next(&mut self, bpm: &mut BufferPoolManager) -> Result<Option<Row>, DomainError>;
 }

@@ -1,14 +1,16 @@
 use std::collections::HashMap;
 
 use crate::{
-    ColumnConstraint, ColumnId, DataType, DomainError, Expr, Row, Schema, SelectStmt, TableId,
-    TableStorage, ValueType,
+    BufferPoolManager, ColumnConstraint, ColumnId, DataType, DomainError, Expr, Row, Schema,
+    SelectStmt, TableHeap, TableId, ValueType,
     catalog::CatalogStore,
+    database::TableContext,
     ddl_action::{
         apply_add_columns, apply_add_constraint, apply_drop_column, apply_drop_constraint,
         apply_modify_column_type, apply_rename_column, apply_set_default,
     },
     dml_action::{handle_delete, handle_insert, handle_update},
+    index::IndexRegistry,
     table_action::{apply_create_table, apply_drop_table, apply_rename_table},
     validator::{validate_alter_table, validate_table_action},
 };
@@ -121,7 +123,8 @@ pub enum CommandAction {
 
 pub(crate) fn execute_table_action(
     catalog: &mut CatalogStore,
-    tables: &mut HashMap<TableId, TableStorage>,
+    tables: &mut HashMap<TableId, TableContext>,
+    base_path: &str, // Parameter tambahan untuk path folder database
     actions: Vec<TableAction>,
 ) -> Result<(), DomainError> {
     // === FASE 1: PRE-CHECK (Dry-Run Validasi) ===
@@ -134,16 +137,16 @@ pub(crate) fn execute_table_action(
                 table_name,
                 columns,
             } => {
-                apply_create_table(catalog, tables, &table_name, columns)?;
+                apply_create_table(catalog, tables, base_path, &table_name, columns)?;
             }
             TableAction::DropTable { table_name } => {
-                apply_drop_table(catalog, tables, &table_name)?;
+                apply_drop_table(catalog, tables, base_path, &table_name)?;
             }
             TableAction::RenameTable {
                 old_table_name,
                 new_table_name,
             } => {
-                apply_rename_table(catalog, tables, &old_table_name, &new_table_name)?;
+                apply_rename_table(catalog, base_path, &old_table_name, &new_table_name)?;
             }
         }
     }
@@ -152,48 +155,48 @@ pub(crate) fn execute_table_action(
 
 pub(crate) fn execute_alter_table(
     catalog: &mut CatalogStore,
-    tables: &mut HashMap<TableId, TableStorage>,
+    tables: &mut HashMap<TableId, TableContext>,
     name: &str,
     actions: Vec<DdlAction>,
 ) -> Result<(), DomainError> {
     // === FASE 1: PRE-CHECK (Dry-Run Validasi Skema) ===
-    validate_alter_table(catalog, &name, &actions)?;
+    validate_alter_table(catalog, name, &actions)?;
 
     // === FASE 2: EKSEKUSI NYATA (Mutation) ===
     for action in actions {
         match action {
             DdlAction::AddColumns { columns } => {
-                apply_add_columns(catalog, tables, &name, columns)?;
+                apply_add_columns(catalog, tables, name, columns)?;
             }
             DdlAction::DropColumn { col_name } => {
-                apply_drop_column(catalog, tables, &name, &col_name)?;
+                apply_drop_column(catalog, tables, name, &col_name)?;
             }
             DdlAction::RenameColumn {
                 old_col_name,
                 new_col_name,
             } => {
-                apply_rename_column(catalog, tables, &name, &old_col_name, &new_col_name)?;
+                apply_rename_column(catalog, name, &old_col_name, &new_col_name)?;
             }
             DdlAction::ModifyColumnType { col_name, new_type } => {
-                apply_modify_column_type(catalog, tables, &name, &col_name, new_type)?;
+                apply_modify_column_type(catalog, name, &col_name, new_type)?;
             }
             DdlAction::AddConstraint {
                 col_name,
                 constraint,
             } => {
-                apply_add_constraint(catalog, tables, &name, &col_name, constraint)?;
+                apply_add_constraint(catalog, tables, name, &col_name, constraint)?;
             }
             DdlAction::DropConstraint {
                 col_name,
                 constraint,
             } => {
-                apply_drop_constraint(catalog, tables, &name, &col_name, &constraint)?;
+                apply_drop_constraint(catalog, name, &col_name, &constraint)?;
             }
             DdlAction::SetDefault {
                 col_name,
                 default_val,
             } => {
-                apply_set_default(catalog, tables, &name, &col_name, default_val)?;
+                apply_set_default(catalog, name, &col_name, default_val)?;
             }
         }
     }
@@ -202,13 +205,24 @@ pub(crate) fn execute_alter_table(
 
 pub(crate) fn execute_dml_action(
     catalog: &CatalogStore,
-    table_storage: &mut TableStorage,
+    table_heap: &mut TableHeap,
+    bpm: &mut BufferPoolManager,
+    index_registry: &mut IndexRegistry,
+    auto_increment_counters: &mut HashMap<ColumnId, i64>, // <-- Tangkap di sini
     table_id: TableId,
     action: DmlAction,
 ) -> Result<QueryResult, DomainError> {
     match action {
         DmlAction::Insert { rows } => {
-            let inserted_count = handle_insert(catalog, table_storage, table_id, rows)?;
+            let inserted_count = handle_insert(
+                catalog,
+                table_heap,
+                bpm,
+                index_registry,
+                auto_increment_counters, // <-- Teruskan ke handle_insert
+                table_id,
+                rows,
+            )?;
             Ok(QueryResult::Inserted(inserted_count))
         }
         DmlAction::Update {
@@ -217,7 +231,9 @@ pub(crate) fn execute_dml_action(
         } => {
             let updated_count = handle_update(
                 catalog,
-                table_storage,
+                table_heap,
+                bpm,
+                index_registry, // Teruskan ke handler
                 table_id,
                 &assignments,
                 predicate.as_ref(),
@@ -225,8 +241,14 @@ pub(crate) fn execute_dml_action(
             Ok(QueryResult::Updated(updated_count))
         }
         DmlAction::Delete { predicate } => {
-            let deleted_count =
-                handle_delete(catalog, table_storage, table_id, predicate.as_ref())?;
+            let deleted_count = handle_delete(
+                catalog,
+                table_heap,
+                bpm,
+                index_registry, // Teruskan ke handler
+                table_id,
+                predicate.as_ref(),
+            )?;
             Ok(QueryResult::Deleted(deleted_count))
         }
     }

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::execution::operator::PhysicalOperator;
 use crate::expression::eval_expr;
-use crate::{DomainError, Expr, Row, Schema, SqlBool};
+use crate::{BufferPoolManager, DomainError, Expr, Row, Schema, SqlBool};
 
 /// Physical operator yang bertugas memfilter baris data berdasarkan predikat ter-bind O(1).
 pub struct FilterOperator {
@@ -32,9 +32,8 @@ impl PhysicalOperator for FilterOperator {
         self.input.schema()
     }
 
-    fn next(&mut self) -> Result<Option<Row>, DomainError> {
-        while let Some(row) = self.input.next()? {
-            // Evaluasi O(1) berbasis bound_predicate
+    fn next(&mut self, bpm: &mut BufferPoolManager) -> Result<Option<Row>, DomainError> {
+        while let Some(row) = self.input.next(bpm)? {
             let res = eval_expr(&self.bound_predicate, &row)?;
             let sql_bool = SqlBool::try_from(res.as_ref())?;
 

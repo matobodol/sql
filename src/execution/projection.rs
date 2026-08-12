@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use super::operator::PhysicalOperator;
-use crate::{DomainError, Expr, Row, Schema, expression::eval_expr};
+use crate::{BufferPoolManager, DomainError, Expr, Row, Schema, expression::eval_expr};
 
 pub struct ProjectionOperator {
     input: Box<dyn PhysicalOperator>,
@@ -39,12 +39,11 @@ impl PhysicalOperator for ProjectionOperator {
     }
 
     #[inline]
-    fn next(&mut self) -> Result<Option<Row>, DomainError> {
-        if let Some(row) = self.input.next()? {
+    fn next(&mut self, bpm: &mut BufferPoolManager) -> Result<Option<Row>, DomainError> {
+        if let Some(row) = self.input.next(bpm)? {
             let mut projected_values = Vec::with_capacity(self.bound_exprs.len());
 
             for expr in &self.bound_exprs {
-                // Evaluasi O(1) direct tanpa Schema Lookup per baris
                 let val = eval_expr(expr, &row)?;
                 projected_values.push(val.into_owned());
             }

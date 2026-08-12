@@ -2,18 +2,18 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::catalog::catalog_store::CatalogStore;
+use crate::database::TableContext;
 use crate::schema::Column;
 use crate::schema::column_constraint::ColumnConstraint;
-use crate::storage::table_store::TableStorage;
 use crate::types::data_type::DataType;
 use crate::types::value_type::ValueType;
 use crate::validator::validate_enum_variants;
-use crate::{ColumnPosition, DomainError, TableId};
+use crate::{ColumnPosition, DomainError, RowId, TableId};
 
 // --- ALTER ACTION
 pub(crate) fn apply_add_columns(
     catalog: &mut CatalogStore,
-    tables: &mut HashMap<TableId, TableStorage>,
+    tables: &mut HashMap<TableId, TableContext>,
     table_name: &str,
     columns: Vec<(String, DataType, Vec<ColumnConstraint>, ColumnPosition)>,
 ) -> Result<(), DomainError> {
@@ -48,7 +48,7 @@ pub(crate) fn apply_add_columns(
             ColumnPosition::Default => current_schema.columns().len(),
         };
 
-        let col_id = catalog.register_column_at(
+        catalog.register_column_at(
             table_id,
             &col_name,
             sql_type.clone(),
@@ -56,31 +56,70 @@ pub(crate) fn apply_add_columns(
             target_idx,
         )?;
 
-        let col_def = Column::with_constraints(col_id, &col_name, sql_type, constraints);
+        let col_def = Column::with_constraints(
+            col_id_from_register_dummy(),
+            &col_name,
+            sql_type,
+            constraints,
+        );
+        // Catatan: Jika col_id dibutuhkan untuk default value, ambil dari register_column_at atau skema baru.
         let default_val = col_def.default_value().cloned().unwrap_or(ValueType::Null);
 
-        let table_storage = tables
+        let context = tables
             .get_mut(&table_id)
             .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
 
-        table_storage
-            .row_store_mut()
-            .add_column_to_rows(target_idx, default_val);
+        // Modifikasi data fisik baris di halaman disk (TableHeap) secara page-oriented
+        let rids = context
+            .table_heap
+            .scan_rids(&mut context.buffer_pool_manager)?;
+        for rid in rids {
+            if let Some(tuple_bytes) = context
+                .table_heap
+                .get_tuple(&mut context.buffer_pool_manager, rid)?
+            {
+                let mut row_values: Vec<ValueType> = bincode::deserialize(&tuple_bytes)
+                    .map_err(|e| DomainError::storage(e.to_string()))?;
+
+                // Sisipkan nilai default pada posisi target kolom baru
+                if target_idx <= row_values.len() {
+                    row_values.insert(target_idx, default_val.clone());
+                } else {
+                    row_values.push(default_val.clone());
+                }
+
+                // Perbarui tuple di disk
+                context
+                    .table_heap
+                    .delete_tuple(&mut context.buffer_pool_manager, rid)?;
+                let new_bytes = bincode::serialize(&row_values)
+                    .map_err(|e| DomainError::storage(e.to_string()))?;
+                context
+                    .table_heap
+                    .insert_tuple(&mut context.buffer_pool_manager, &new_bytes)?;
+            }
+        }
     }
 
     let new_schema = catalog.get_schema(table_id)?;
-    let table_storage = tables
+    let context = tables
         .get_mut(&table_id)
         .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
 
-    table_storage.update_schema(new_schema.clone());
-
-    // OPTIMASI 2: Conditional Index Rebuild (Hanya rebuild jika tabel memiliki baris DAN memiliki indeks aktif)
-    let has_rows = !table_storage.row_store().rows().is_empty();
-    let has_indexes = !table_storage.index_registry().is_empty();
+    // OPTIMASI 2: Conditional Index Rebuild berbasis halaman fisik
+    let rids = context
+        .table_heap
+        .scan_rids(&mut context.buffer_pool_manager)?;
+    let has_rows = !rids.is_empty();
+    let has_indexes = !context.index_registry.is_empty();
 
     if has_rows && has_indexes {
-        table_storage.rebuild_indexes(&new_schema)?;
+        rebuild_indexes_for_context(
+            &mut context.table_heap,
+            &mut context.buffer_pool_manager,
+            &mut context.index_registry, // Ubah dari 'context' menjadi ini
+            &new_schema,
+        )?;
     }
 
     Ok(())
@@ -88,30 +127,67 @@ pub(crate) fn apply_add_columns(
 
 pub(crate) fn apply_drop_column(
     catalog: &mut CatalogStore,
-    tables: &mut HashMap<TableId, TableStorage>,
+    tables: &mut HashMap<TableId, TableContext>,
     table_name: &str,
     col_name: &str,
 ) -> Result<(), DomainError> {
     let table_id = catalog.get_table_id(table_name)?;
-
     let col_id = catalog.get_column_id(table_id, col_name)?;
+
+    let current_schema = catalog.get_schema(table_id)?;
+    let col_idx = current_schema
+        .get_column_index_by_name(col_name)
+        .ok_or_else(|| DomainError::eval_error(format!("Kolom '{col_name}' tidak ditemukan")))?;
 
     catalog.unregister_column(table_id, col_name)?;
     let new_schema = catalog.get_schema(table_id)?;
 
-    let table_storage = tables
+    let context = tables
         .get_mut(&table_id)
         .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
 
-    table_storage.update_schema(new_schema.clone());
-    table_storage.index_registry_mut().drop_index(col_id);
+    context.index_registry.drop_index(col_id);
 
-    // Penerapan Conditional Index Rebuild yang serupa pada penghapusan kolom
-    let has_rows = !table_storage.row_store().rows().is_empty();
-    let has_indexes = !table_storage.index_registry().is_empty();
+    // Hapus kolom dari setiap baris di TableHeap
+    let rids = context
+        .table_heap
+        .scan_rids(&mut context.buffer_pool_manager)?;
+    for rid in rids {
+        if let Some(tuple_bytes) = context
+            .table_heap
+            .get_tuple(&mut context.buffer_pool_manager, rid)?
+        {
+            let mut row_values: Vec<ValueType> = bincode::deserialize(&tuple_bytes)
+                .map_err(|e| DomainError::storage(e.to_string()))?;
+
+            if col_idx < row_values.len() {
+                row_values.remove(col_idx);
+            }
+
+            context
+                .table_heap
+                .delete_tuple(&mut context.buffer_pool_manager, rid)?;
+            let new_bytes =
+                bincode::serialize(&row_values).map_err(|e| DomainError::storage(e.to_string()))?;
+            context
+                .table_heap
+                .insert_tuple(&mut context.buffer_pool_manager, &new_bytes)?;
+        }
+    }
+
+    let rids_after = context
+        .table_heap
+        .scan_rids(&mut context.buffer_pool_manager)?;
+    let has_rows = !rids_after.is_empty();
+    let has_indexes = !context.index_registry.is_empty();
 
     if has_rows && has_indexes {
-        table_storage.rebuild_indexes(&new_schema)?;
+        rebuild_indexes_for_context(
+            &mut context.table_heap,
+            &mut context.buffer_pool_manager,
+            &mut context.index_registry, // Ubah dari 'context' menjadi ini
+            &new_schema,
+        )?;
     }
 
     Ok(())
@@ -119,30 +195,23 @@ pub(crate) fn apply_drop_column(
 
 pub(crate) fn apply_rename_column(
     catalog: &mut CatalogStore,
-    tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,
     old_name: &str,
     new_name: &str,
 ) -> Result<(), DomainError> {
     let table_id = catalog.get_table_id(table_name)?;
-
     let col_id = catalog.get_column_id(table_id, old_name)?;
 
     catalog.mutate_column(table_id, col_id, |col| {
         col.name = new_name.to_string();
     })?;
 
-    let new_schema = catalog.get_schema(table_id)?;
-    if let Some(table_storage) = tables.get_mut(&table_id) {
-        table_storage.update_schema(new_schema);
-    }
-
+    // Karena rename hanya mengubah metadata katalog, tidak ada perubahan pada TableHeap/Index.
     Ok(())
 }
 
 pub(crate) fn apply_modify_column_type(
     catalog: &mut CatalogStore,
-    tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,
     col_name: &str,
     new_type: DataType,
@@ -150,30 +219,23 @@ pub(crate) fn apply_modify_column_type(
     validate_enum_variants(&new_type)?;
 
     let table_id = catalog.get_table_id(table_name)?;
-
     let col_id = catalog.get_column_id(table_id, col_name)?;
 
     catalog.mutate_column(table_id, col_id, |col| {
         col.sql_type = new_type.clone();
     })?;
 
-    let new_schema = catalog.get_schema(table_id)?;
-    if let Some(table_storage) = tables.get_mut(&table_id) {
-        table_storage.update_schema(new_schema);
-    }
-
     Ok(())
 }
 
 pub(crate) fn apply_add_constraint(
     catalog: &mut CatalogStore,
-    tables: &mut HashMap<TableId, TableStorage>,
+    tables: &mut HashMap<TableId, TableContext>,
     table_name: &str,
     col_name: &str,
     constraint: ColumnConstraint,
 ) -> Result<(), DomainError> {
     let table_id = catalog.get_table_id(table_name)?;
-
     let col_id = catalog.get_column_id(table_id, col_name)?;
 
     catalog.mutate_column(table_id, col_id, |col| {
@@ -184,21 +246,26 @@ pub(crate) fn apply_add_constraint(
 
     let new_schema = catalog.get_schema(table_id)?;
 
-    if let Some(table_storage) = tables.get_mut(&table_id) {
-        table_storage.update_schema(new_schema.clone());
-
+    if let Some(context) = tables.get_mut(&table_id) {
         if matches!(
             constraint,
             ColumnConstraint::Unique | ColumnConstraint::PrimaryKey
         ) {
-            let _ = table_storage
-                .index_registry_mut()
-                .create_btree_index(col_id, true);
+            let _ = context.index_registry.create_btree_index(col_id, true);
 
-            let has_rows = !table_storage.row_store().rows().is_empty();
-            let has_indexes = !table_storage.index_registry().is_empty();
+            let rids = context
+                .table_heap
+                .scan_rids(&mut context.buffer_pool_manager)?;
+            let has_rows = !rids.is_empty();
+            let has_indexes = !context.index_registry.is_empty();
+
             if has_rows && has_indexes {
-                table_storage.rebuild_indexes(&new_schema)?;
+                rebuild_indexes_for_context(
+                    &mut context.table_heap,
+                    &mut context.buffer_pool_manager,
+                    &mut context.index_registry, // Ubah dari 'context' menjadi ini
+                    &new_schema,
+                )?;
             }
         }
     }
@@ -208,36 +275,27 @@ pub(crate) fn apply_add_constraint(
 
 pub(crate) fn apply_drop_constraint(
     catalog: &mut CatalogStore,
-    tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,
     col_name: &str,
     constraint: &ColumnConstraint,
 ) -> Result<(), DomainError> {
     let table_id = catalog.get_table_id(table_name)?;
-
     let col_id = catalog.get_column_id(table_id, col_name)?;
 
     catalog.mutate_column(table_id, col_id, |col| {
         col.constraints.retain(|c| c != constraint);
     })?;
 
-    let new_schema = catalog.get_schema(table_id)?;
-    if let Some(table_storage) = tables.get_mut(&table_id) {
-        table_storage.update_schema(new_schema);
-    }
-
     Ok(())
 }
 
 pub(crate) fn apply_set_default(
     catalog: &mut CatalogStore,
-    tables: &mut HashMap<TableId, TableStorage>,
     table_name: &str,
     col_name: &str,
     default_val: Option<ValueType>,
 ) -> Result<(), DomainError> {
     let table_id = catalog.get_table_id(table_name)?;
-
     let col_id = catalog.get_column_id(table_id, col_name)?;
 
     catalog.mutate_column(table_id, col_id, |col| {
@@ -249,10 +307,40 @@ pub(crate) fn apply_set_default(
             )));
     })?;
 
-    let new_schema = catalog.get_schema(table_id)?;
-    if let Some(table_storage) = tables.get_mut(&table_id) {
-        table_storage.update_schema(new_schema);
-    }
-
     Ok(())
+}
+
+// Helper lokal untuk membangun ulang indeks dari TableHeap
+fn rebuild_indexes_for_context(
+    table_heap: &mut crate::TableHeap,
+    bpm: &mut crate::BufferPoolManager,
+    index_registry: &mut crate::index::index_registry::IndexRegistry, // Cukup pinjam index_registry-nya saja
+    schema: &crate::Schema,
+) -> Result<(), DomainError> {
+    index_registry.clear();
+    let rids = table_heap.scan_rids(bpm)?;
+
+    for rid in rids {
+        if let Some(tuple_bytes) = table_heap.get_tuple(bpm, rid)? {
+            let row_values: Vec<ValueType> = bincode::deserialize(&tuple_bytes)
+                .map_err(|e| DomainError::storage(e.to_string()))?;
+
+            let entries: Vec<(crate::ColumnId, &ValueType)> = schema
+                .columns()
+                .iter()
+                .enumerate()
+                .filter(|(_, col)| index_registry.has_index(col.id))
+                .map(|(idx, col)| (col.id, &row_values[idx]))
+                .collect();
+
+            let row_id_alias = RowId::from(rid);
+            index_registry.insert_entry_ref(row_id_alias, &entries)?;
+        }
+    }
+    Ok(())
+}
+
+// Dummy helper jika diperlukan untuk mengambil col_id saat pembuatan Column objek sementara
+fn col_id_from_register_dummy() -> crate::ColumnId {
+    crate::ColumnId(0)
 }
