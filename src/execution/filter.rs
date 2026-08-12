@@ -2,9 +2,10 @@
 
 use std::sync::Arc;
 
+use crate::disk::BufferPoolManager;
 use crate::execution::operator::PhysicalOperator;
 use crate::expression::eval_expr;
-use crate::{BufferPoolManager, DomainError, Expr, Row, Schema, SqlBool};
+use crate::{Bool3VL, DomainError, Expr, Row, Schema};
 
 /// Physical operator yang bertugas memfilter baris data berdasarkan predikat ter-bind O(1).
 pub struct FilterOperator {
@@ -35,7 +36,7 @@ impl PhysicalOperator for FilterOperator {
     fn next(&mut self, bpm: &mut BufferPoolManager) -> Result<Option<Row>, DomainError> {
         while let Some(row) = self.input.next(bpm)? {
             let res = eval_expr(&self.bound_predicate, &row)?;
-            let sql_bool = SqlBool::try_from(res.as_ref())?;
+            let sql_bool = Bool3VL::try_from(res.as_ref())?;
 
             if sql_bool.is_true() {
                 return Ok(Some(row));

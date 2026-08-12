@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
+use crate::disk::{BufferPoolManager, TableHeap};
 use crate::execution::operator::PhysicalOperator;
 use crate::execution::{
     AggregateOperator, FilterOperator, LimitOperator, ProjectionOperator, SeqScanOperator,
     SortOperator,
 };
 use crate::{
-    AggregateFunc, BufferPoolManager, Column, ColumnId, DataType, DomainError, Expr, OrderByExpr,
-    Schema, TableHeap, ValueType,
+    AggregateFunc, Column, ColumnId, DataType, DomainError, Expr, OrderByExpr, Schema, ValueType,
 };
 
 #[derive(Debug, Clone, PartialEq)]

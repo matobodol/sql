@@ -1,11 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::catalog::CatalogStore;
+use crate::disk::{BufferPoolManager, RID, TableHeap};
 use crate::expression::{eval_expr, eval_where};
 use crate::index::{Index, IndexRegistry};
 use crate::validator::validate_row;
-use crate::{BinaryOp, ColumnId, DomainError, Expr, RowId, Schema, ValueType};
-use crate::{BufferPoolManager, RID, Row, TableHeap, TableId};
+use crate::{BinaryOp, ColumnId, DomainError, Expr, Row, RowId, Schema, TableId, ValueType};
 
 struct StagedUpdate {
     #[allow(warnings)]

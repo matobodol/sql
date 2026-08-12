@@ -3,8 +3,9 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::vec::IntoIter;
 
+use crate::disk::BufferPoolManager;
 use crate::execution::operator::PhysicalOperator;
-use crate::{BufferPoolManager, ColumnId, DomainError, Row, RowId, Schema, ValueType};
+use crate::{ColumnId, DomainError, Row, RowId, Schema, ValueType};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AggregateFunc {

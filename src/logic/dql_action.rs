@@ -1,7 +1,8 @@
 use crate::catalog::CatalogStore;
 use crate::command::QueryResult;
+use crate::disk::{BufferPoolManager, TableHeap};
 use crate::execution::PhysicalPlanner;
-use crate::{BufferPoolManager, DomainError, Schema, SelectStmt, TableHeap, TableId};
+use crate::{DomainError, Schema, SelectStmt, TableId};
 
 pub(crate) fn execute_select(
     catalog: &CatalogStore,

@@ -1,5 +1,5 @@
 use super::{binary_op::BinaryOp, expr::Expr};
-use crate::{DomainError, Row, SqlBool, ValueType};
+use crate::{Bool3VL, DomainError, Row, ValueType};
 use std::borrow::Cow;
 
 /// Evaluasi ekspresi berbasis Zero-Copy (mengembalikan Cow<&SqlValue>) dan Instant O(1) Access
@@ -24,7 +24,7 @@ pub fn eval_expr<'a>(expr: &'a Expr, row: &'a Row) -> Result<Cow<'a, ValueType>,
         // --- Unary Operations ---
         Expr::Not(inner) => {
             let val = eval_expr(inner, row)?;
-            let sql_bool = SqlBool::try_from(val.as_ref())?;
+            let sql_bool = Bool3VL::try_from(val.as_ref())?;
             Ok(Cow::Owned(ValueType::from(!sql_bool)))
         }
 
@@ -53,9 +53,9 @@ pub fn eval_expr<'a>(expr: &'a Expr, row: &'a Row) -> Result<Cow<'a, ValueType>,
 
                 // Memastikan passing &SqlValue ke .eq()
                 match target_val.as_ref().eq(item_val.as_ref()) {
-                    SqlBool::True => return Ok(Cow::Owned(ValueType::Bool(true))),
-                    SqlBool::Unknown => has_unknown = true,
-                    SqlBool::False => {}
+                    Bool3VL::True => return Ok(Cow::Owned(ValueType::Bool(true))),
+                    Bool3VL::Unknown => has_unknown = true,
+                    Bool3VL::False => {}
                 }
             }
 
@@ -107,6 +107,6 @@ fn eval_binary_op(
 #[inline]
 pub fn eval_where(expr: &Expr, row: &Row) -> Result<bool, DomainError> {
     let result = eval_expr(expr, row)?;
-    let sql_bool = SqlBool::try_from(result.as_ref())?;
+    let sql_bool = Bool3VL::try_from(result.as_ref())?;
     Ok(sql_bool.is_true())
 }

@@ -1,56 +1,47 @@
 use std::sync::Arc;
 use std::{collections::HashMap, path::Path};
 
+use crate::TableContext;
+use crate::disk::{BufferPoolManager, DiskManager, TableHeap};
 use crate::index::IndexRegistry;
-use crate::storage::storage::DiskStorage;
-use crate::{BufferPoolManager, ColumnId, DiskManager, TableHeap};
+use crate::storage::DiskStorage;
 use crate::{
-    CommandAction, DomainError, QueryResult, TableId,
+    BASE_PATH, CommandAction, DomainError, QueryResult, TableId,
     catalog::CatalogStore,
     command::{execute_alter_table, execute_dml_action, execute_table_action},
-    dql_action::execute_select,
-    table_action::{execute_describe_table, execute_show_tables},
+    logic::{execute_describe_table, execute_select, execute_show_tables},
 };
-
-/// Konteks penyimpanan untuk setiap tabel fisik
-#[derive(Debug)]
-pub struct TableContext {
-    pub table_heap: TableHeap,
-    pub buffer_pool_manager: BufferPoolManager,
-    pub index_registry: IndexRegistry, // Ditambahkan agar indeks B-Tree dapat dikelola per tabel
-    pub auto_increment_counters: HashMap<ColumnId, i64>,
-}
 
 #[derive(Debug)]
 pub struct Database {
     catalog: CatalogStore,
     // Memetakan TableId ke konteks tabel (menyimpan data di file .db terpisah)
     tables: HashMap<TableId, TableContext>,
-    base_path: String,
+    db_path: String,
 }
 
 impl Database {
     /// Membuat instance Database baru dengan path direktori fisik tertentu
     pub fn new(username: &str, dbname: &str) -> Self {
-        let base_path = format!(
-            "Data_base/{}/{}",
+        let db_path = format!(
+            "{BASE_PATH}/{}/{}",
             username.to_lowercase(),
             dbname.to_lowercase()
         );
 
         // Buat folder fisik untuk database secara otomatis saat diinisialisasi
-        let _ = std::fs::create_dir_all(&base_path);
+        let _ = std::fs::create_dir_all(&db_path);
 
         Self {
             catalog: CatalogStore::new(),
             tables: HashMap::new(),
-            base_path,
+            db_path,
         }
     }
 
     /// Menyimpan metadata ke metadata.bin dan meng-flush semua halaman tabel ke file .db masing-masing
     pub fn save_to_disk(&mut self) -> Result<(), DomainError> {
-        let path = Path::new(&self.base_path);
+        let path = Path::new(&self.db_path);
         std::fs::create_dir_all(path).map_err(|e| DomainError::storage(e.to_string()))?;
 
         // 1. Simpan metadata katalog (`metadata.bin`)
@@ -68,12 +59,12 @@ impl Database {
 
     /// Memuat database dari struktur folder disk yang diminta
     pub fn load_from_disk(username: &str, dbname: &str) -> Result<Self, DomainError> {
-        let base_path = format!(
-            "Data_base/{}/{}",
+        let db_path = format!(
+            "{BASE_PATH}/{}/{}",
             username.to_lowercase(),
             dbname.to_lowercase()
         );
-        let path = Path::new(&base_path);
+        let path = Path::new(&db_path);
 
         // 1. Load metadata katalog (`metadata.bin`)[span_2](start_span)[span_2](end_span)
         let metadata_path = path.join("metadata.bin");
@@ -125,7 +116,7 @@ impl Database {
         Ok(Self {
             catalog,
             tables,
-            base_path,
+            db_path,
         })
     }
 }
@@ -147,12 +138,7 @@ impl Database {
 
             CommandAction::TableAction { actions } => {
                 // Pastikan fungsi execute_table_action menerima parameter base_path jika diperlukan
-                execute_table_action(
-                    &mut self.catalog,
-                    &mut self.tables,
-                    &self.base_path,
-                    actions,
-                )?;
+                execute_table_action(&mut self.catalog, &mut self.tables, &self.db_path, actions)?;
 
                 self.save_to_disk()?;
                 Ok(QueryResult::OK)

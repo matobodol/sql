@@ -1,7 +1,7 @@
 //! Physical operator untuk mengeksekusi pembatasan jumlah baris data (`LIMIT`) dan `OFFSET`.
 
 use super::operator::PhysicalOperator;
-use crate::{BufferPoolManager, DomainError, Row, Schema};
+use crate::{DomainError, Row, Schema, disk::BufferPoolManager};
 
 pub struct LimitOperator {
     input: Box<dyn PhysicalOperator>,

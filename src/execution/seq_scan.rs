@@ -1,7 +1,8 @@
 //! Physical operator untuk Sequential Scan pada tabel berbasis halaman fisik.
 
+use crate::disk::{BufferPoolManager, RID, TableHeap};
 use crate::execution::operator::PhysicalOperator;
-use crate::{BufferPoolManager, DomainError, RID, Row, RowId, Schema, TableHeap, ValueType};
+use crate::{DomainError, Row, RowId, Schema, ValueType};
 
 pub struct SeqScanOperator {
     table_heap: TableHeap,

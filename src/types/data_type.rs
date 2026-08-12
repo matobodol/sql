@@ -42,66 +42,66 @@ impl DataType {
 
 /// Evaluasi logika Three-Valued Logic (3VL)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SqlBool {
+pub enum Bool3VL {
     True,
     False,
     Unknown,
 }
 
-impl Not for SqlBool {
+impl Not for Bool3VL {
     type Output = Self;
 
     #[inline]
     fn not(self) -> Self::Output {
         match self {
-            SqlBool::True => SqlBool::False,
-            SqlBool::False => SqlBool::True,
-            SqlBool::Unknown => SqlBool::Unknown,
+            Bool3VL::True => Bool3VL::False,
+            Bool3VL::False => Bool3VL::True,
+            Bool3VL::Unknown => Bool3VL::Unknown,
         }
     }
 }
 
-impl SqlBool {
+impl Bool3VL {
     #[inline]
     pub fn is_true(&self) -> bool {
-        matches!(self, SqlBool::True)
+        matches!(self, Bool3VL::True)
     }
 
     #[inline]
     pub fn and(self, other: Self) -> Self {
         match (self, other) {
-            (SqlBool::False, _) | (_, SqlBool::False) => SqlBool::False,
-            (SqlBool::True, SqlBool::True) => SqlBool::True,
-            _ => SqlBool::Unknown,
+            (Bool3VL::False, _) | (_, Bool3VL::False) => Bool3VL::False,
+            (Bool3VL::True, Bool3VL::True) => Bool3VL::True,
+            _ => Bool3VL::Unknown,
         }
     }
 
     #[inline]
     pub fn or(self, other: Self) -> Self {
         match (self, other) {
-            (SqlBool::True, _) | (_, SqlBool::True) => SqlBool::True,
-            (SqlBool::False, SqlBool::False) => SqlBool::False,
-            _ => SqlBool::Unknown,
+            (Bool3VL::True, _) | (_, Bool3VL::True) => Bool3VL::True,
+            (Bool3VL::False, Bool3VL::False) => Bool3VL::False,
+            _ => Bool3VL::Unknown,
         }
     }
 }
 
 // --- CONVERSION IMPLEMENTATIONS ---
 
-impl From<bool> for SqlBool {
+impl From<bool> for Bool3VL {
     #[inline]
     fn from(cond: bool) -> Self {
-        if cond { SqlBool::True } else { SqlBool::False }
+        if cond { Bool3VL::True } else { Bool3VL::False }
     }
 }
 
-impl TryFrom<&ValueType> for SqlBool {
+impl TryFrom<&ValueType> for Bool3VL {
     type Error = DomainError;
 
     fn try_from(value: &ValueType) -> Result<Self, Self::Error> {
         match value {
-            ValueType::Bool(b) => Ok(SqlBool::from(*b)),
-            ValueType::Null => Ok(SqlBool::Unknown),
+            ValueType::Bool(b) => Ok(Bool3VL::from(*b)),
+            ValueType::Null => Ok(Bool3VL::Unknown),
             other => Err(DomainError::eval_error(format!(
                 "Operasi logika membutuhkan tipe BOOLEAN, tetapi mendapatkan {:?}",
                 other
@@ -110,11 +110,11 @@ impl TryFrom<&ValueType> for SqlBool {
     }
 }
 
-impl TryFrom<ValueType> for SqlBool {
+impl TryFrom<ValueType> for Bool3VL {
     type Error = DomainError;
 
     #[inline]
     fn try_from(value: ValueType) -> Result<Self, Self::Error> {
-        SqlBool::try_from(&value)
+        Bool3VL::try_from(&value)
     }
 }

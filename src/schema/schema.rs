@@ -119,11 +119,11 @@ impl Schema {
         let mut seen_names = HashSet::with_capacity(columns.len());
 
         for col in columns {
-            let col_name_lower = col.name.clone();
+            let col_name = col.name.clone();
 
             validate_enum_variants(&col.sql_type)?;
 
-            if !seen_names.insert(col_name_lower) {
+            if !seen_names.insert(col_name) {
                 return Err(DomainError::eval_error(format!(
                     "Duplikat nama kolom '{}' dalam skema tabel",
                     col.name

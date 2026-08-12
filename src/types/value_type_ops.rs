@@ -1,7 +1,7 @@
 use ordered_float::OrderedFloat;
 use regex::Regex;
 
-use crate::{DomainError, SqlBool, ValueType};
+use crate::{Bool3VL, DomainError, ValueType};
 
 impl ValueType {
     /// Helper internal zero-copy mengekstraksi string reference
@@ -16,13 +16,13 @@ impl ValueType {
     }
 
     /// Evaluasi LIKE berbasis Pre-compiled Regex (menerima `&Regex` terkompilasi dari Evaluator)
-    pub fn like_compiled(&self, re: &Regex) -> Result<SqlBool, DomainError> {
+    pub fn like_compiled(&self, re: &Regex) -> Result<Bool3VL, DomainError> {
         if self.is_null() {
-            return Ok(SqlBool::Unknown);
+            return Ok(Bool3VL::Unknown);
         }
 
         if let Some(text) = self.as_str() {
-            Ok(SqlBool::from(re.is_match(text)))
+            Ok(Bool3VL::from(re.is_match(text)))
         } else {
             Err(DomainError::eval_error(
                 "Operan untuk operator LIKE harus bertipe Text, Enum, atau Custom",
@@ -31,9 +31,9 @@ impl ValueType {
     }
 
     /// Fallback Evaluasi LIKE standar
-    pub fn like(&self, pattern: &Self) -> Result<SqlBool, DomainError> {
+    pub fn like(&self, pattern: &Self) -> Result<Bool3VL, DomainError> {
         if self.is_null() || pattern.is_null() {
-            return Ok(SqlBool::Unknown);
+            return Ok(Bool3VL::Unknown);
         }
 
         match (self.as_str(), pattern.as_str()) {
@@ -43,7 +43,7 @@ impl ValueType {
                     DomainError::eval_error(format!("Pola LIKE '{pat}' tidak valid: {e}"))
                 })?;
 
-                Ok(SqlBool::from(re.is_match(text)))
+                Ok(Bool3VL::from(re.is_match(text)))
             }
             _ => Err(DomainError::eval_error(
                 "Operan untuk operator LIKE harus bertipe Text, Enum, atau Custom",

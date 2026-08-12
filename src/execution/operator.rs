@@ -1,6 +1,6 @@
 //! Kontrak trait utama untuk Physical Execution Operators berbasis Volcano Iterator Model[span_4](start_span)[span_4](end_span).
 
-use crate::{BufferPoolManager, DomainError, Row, Schema};
+use crate::{DomainError, Row, Schema, disk::BufferPoolManager};
 
 /// Trait utama untuk semua Physical Operator dalam pipeline eksekusi query engine[span_5](start_span)[span_5](end_span).
 pub trait PhysicalOperator {

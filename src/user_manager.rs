@@ -1,4 +1,4 @@
-use crate::DomainError;
+use crate::{BASE_PATH, DomainError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -139,8 +139,8 @@ impl UserManager {
             return Err(DomainError::UserAlreadyExists(username.into()));
         }
 
-        // Buat folder fisik untuk user baru: Data_base/{username}
-        let user_dir = format!("Data_base/{}", username.to_lowercase());
+        // Buat folder fisik untuk user baru: data/{username}
+        let user_dir = format!("{BASE_PATH}/{}", username.to_lowercase());
         std::fs::create_dir_all(&user_dir)
             .map_err(|e| DomainError::storage(format!("Gagal membuat direktori user: {e}")))?;
 
@@ -183,9 +183,9 @@ impl UserManager {
         user.username = new_username.to_string();
         self.users.insert(new_username.to_string(), user);
 
-        // 4. Ubah nama folder fisik di disk secara serentak (`Data_base/{old_name}` -> `{new_name}`)
-        let old_dir = format!("Data_base/{}", old_lower);
-        let new_dir = format!("Data_base/{}", new_lower);
+        // 4. Ubah nama folder fisik di disk secara serentak (`data/{old_name}` -> `{new_name}`)
+        let old_dir = format!("{BASE_PATH}/{}", old_lower);
+        let new_dir = format!("{BASE_PATH}/{}", new_lower);
 
         let old_path = Path::new(&old_dir);
         let new_path = Path::new(&new_dir);
@@ -212,8 +212,8 @@ impl UserManager {
             return Err(DomainError::UserNotFound(username.into()));
         }
 
-        // 2. Hapus folder fisik user di disk secara serentak (`Data_base/{username}`)
-        let user_dir = format!("Data_base/{}", username_lower);
+        // 2. Hapus folder fisik user di disk secara serentak (`data/{username}`)
+        let user_dir = format!("{BASE_PATH}/{}", username_lower);
         let path = Path::new(&user_dir);
         if path.exists() {
             std::fs::remove_dir_all(path).map_err(|e| {

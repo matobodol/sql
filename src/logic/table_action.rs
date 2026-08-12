@@ -1,16 +1,18 @@
 use std::{collections::HashMap, path::Path, sync::Arc};
 
 use crate::{
-    BufferPoolManager, Column, ColumnConstraint, ColumnId, DataType, DiskManager, DomainError,
-    QueryResult, Row, RowId, Schema, TableHeap, TableId, ValueType, catalog::CatalogStore,
-    database::TableContext, index::IndexRegistry,
+    Column, ColumnConstraint, ColumnId, DataType, DomainError, QueryResult, Row, RowId, Schema,
+    TableContext, TableId, ValueType,
+    catalog::CatalogStore,
+    disk::{BufferPoolManager, DiskManager, TableHeap},
+    index::IndexRegistry,
 };
 
 // --- TABLE ACTION
 pub(crate) fn apply_create_table(
     catalog: &mut CatalogStore,
     tables: &mut HashMap<TableId, TableContext>,
-    base_path: &str,
+    db_path: &str,
     table_name: &str,
     raw_columns: Vec<(String, DataType, Vec<ColumnConstraint>)>,
 ) -> Result<(), DomainError> {
@@ -24,7 +26,7 @@ pub(crate) fn apply_create_table(
     }
 
     // Inisialisasi file fisik .db khusus untuk tabel baru di dalam folder database terkait
-    let table_file_path = Path::new(base_path).join(format!("{}.db", table_name));
+    let table_file_path = Path::new(db_path).join(format!("{}.db", table_name));
     let disk_manager = DiskManager::new(&table_file_path)?;
     let mut buffer_pool_manager = BufferPoolManager::new(disk_manager, 10);
     let table_heap = TableHeap::new(&mut buffer_pool_manager)?;
@@ -56,14 +58,14 @@ pub(crate) fn apply_create_table(
 pub(crate) fn apply_drop_table(
     catalog: &mut CatalogStore,
     tables: &mut HashMap<TableId, TableContext>,
-    base_path: &str,
+    db_path: &str,
     table_name: &str,
 ) -> Result<(), DomainError> {
     let table_id = catalog.unregister_table(table_name)?;
     tables.remove(&table_id);
 
     // Hapus file fisik .db milik tabel dari disk
-    let table_file_path = Path::new(base_path).join(format!("{}.db", table_name));
+    let table_file_path = Path::new(db_path).join(format!("{}.db", table_name));
     if table_file_path.exists() {
         std::fs::remove_file(&table_file_path).map_err(|e| DomainError::storage(e.to_string()))?;
     }
@@ -74,7 +76,7 @@ pub(crate) fn apply_drop_table(
 
 pub(crate) fn apply_rename_table(
     catalog: &mut CatalogStore,
-    base_path: &str,
+    db_path: &str,
     old_name: &str,
     new_name: &str,
 ) -> Result<(), DomainError> {
@@ -82,8 +84,8 @@ pub(crate) fn apply_rename_table(
     let table_id = catalog.rename_table(old_name, new_name)?;
 
     // Ubah nama file fisik .db di disk
-    let old_path = Path::new(base_path).join(format!("{}.db", old_name));
-    let new_path = Path::new(base_path).join(format!("{}.db", new_name));
+    let old_path = Path::new(db_path).join(format!("{}.db", old_name));
+    let new_path = Path::new(db_path).join(format!("{}.db", new_name));
 
     if old_path.exists() {
         std::fs::rename(&old_path, &new_path).map_err(|e| DomainError::storage(e.to_string()))?;

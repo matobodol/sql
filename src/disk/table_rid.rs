@@ -1,4 +1,7 @@
-use crate::{PageId, RowId, SlotId};
+use crate::{
+    RowId,
+    disk::{PageId, SlotId},
+};
 
 /// Record Identifier (RID) merepresentasikan lokasi unik satu Tuple/Row di disk.
 /// Terdiri dari lokasi Page ID dan Slot ID di dalam Slotted Page tersebut.

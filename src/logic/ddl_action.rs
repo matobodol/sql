@@ -2,13 +2,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::catalog::catalog_store::CatalogStore;
-use crate::database::TableContext;
+use crate::disk::{BufferPoolManager, TableHeap};
+use crate::index::IndexRegistry;
 use crate::schema::Column;
 use crate::schema::column_constraint::ColumnConstraint;
 use crate::types::data_type::DataType;
 use crate::types::value_type::ValueType;
 use crate::validator::validate_enum_variants;
-use crate::{ColumnPosition, DomainError, RowId, TableId};
+use crate::{ColumnPosition, DomainError, RowId, TableContext, TableId};
 
 // --- ALTER ACTION
 pub(crate) fn apply_add_columns(
@@ -117,7 +118,7 @@ pub(crate) fn apply_add_columns(
         rebuild_indexes_for_context(
             &mut context.table_heap,
             &mut context.buffer_pool_manager,
-            &mut context.index_registry, // Ubah dari 'context' menjadi ini
+            &mut context.index_registry,
             &new_schema,
         )?;
     }
@@ -312,9 +313,9 @@ pub(crate) fn apply_set_default(
 
 // Helper lokal untuk membangun ulang indeks dari TableHeap
 fn rebuild_indexes_for_context(
-    table_heap: &mut crate::TableHeap,
-    bpm: &mut crate::BufferPoolManager,
-    index_registry: &mut crate::index::index_registry::IndexRegistry, // Cukup pinjam index_registry-nya saja
+    table_heap: &mut TableHeap,
+    bpm: &mut BufferPoolManager,
+    index_registry: &mut IndexRegistry, // Cukup pinjam index_registry-nya saja
     schema: &crate::Schema,
 ) -> Result<(), DomainError> {
     index_registry.clear();

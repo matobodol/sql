@@ -1,4 +1,4 @@
-use crate::{DomainError, RID, Row};
+use crate::{DomainError, Row, disk::RID};
 
 pub trait TableReader {
     /// Mengambil satu baris spesifik berdasarkan RID fisik dari disk/buffer pool

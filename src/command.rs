@@ -1,17 +1,16 @@
 use std::collections::HashMap;
 
 use crate::{
-    BufferPoolManager, ColumnConstraint, ColumnId, DataType, DomainError, Expr, Row, Schema,
-    SelectStmt, TableHeap, TableId, ValueType,
+    ColumnConstraint, ColumnId, DataType, DomainError, Expr, Row, Schema, SelectStmt, TableContext,
+    TableId, ValueType,
     catalog::CatalogStore,
-    database::TableContext,
-    ddl_action::{
-        apply_add_columns, apply_add_constraint, apply_drop_column, apply_drop_constraint,
-        apply_modify_column_type, apply_rename_column, apply_set_default,
-    },
-    dml_action::{handle_delete, handle_insert, handle_update},
+    disk::{BufferPoolManager, TableHeap},
     index::IndexRegistry,
-    table_action::{apply_create_table, apply_drop_table, apply_rename_table},
+    logic::{
+        apply_add_columns, apply_add_constraint, apply_create_table, apply_drop_column,
+        apply_drop_constraint, apply_drop_table, apply_modify_column_type, apply_rename_column,
+        apply_rename_table, apply_set_default, handle_delete, handle_insert, handle_update,
+    },
     validator::{validate_alter_table, validate_table_action},
 };
 
@@ -124,7 +123,7 @@ pub enum CommandAction {
 pub(crate) fn execute_table_action(
     catalog: &mut CatalogStore,
     tables: &mut HashMap<TableId, TableContext>,
-    base_path: &str, // Parameter tambahan untuk path folder database
+    db_path: &str, // Parameter tambahan untuk path folder database
     actions: Vec<TableAction>,
 ) -> Result<(), DomainError> {
     // === FASE 1: PRE-CHECK (Dry-Run Validasi) ===
@@ -137,16 +136,16 @@ pub(crate) fn execute_table_action(
                 table_name,
                 columns,
             } => {
-                apply_create_table(catalog, tables, base_path, &table_name, columns)?;
+                apply_create_table(catalog, tables, db_path, &table_name, columns)?;
             }
             TableAction::DropTable { table_name } => {
-                apply_drop_table(catalog, tables, base_path, &table_name)?;
+                apply_drop_table(catalog, tables, db_path, &table_name)?;
             }
             TableAction::RenameTable {
                 old_table_name,
                 new_table_name,
             } => {
-                apply_rename_table(catalog, base_path, &old_table_name, &new_table_name)?;
+                apply_rename_table(catalog, db_path, &old_table_name, &new_table_name)?;
             }
         }
     }

@@ -1,15 +1,19 @@
+use std::{collections::HashMap, path::Path};
+
 use crate::{
     CommandAction, Database, DomainError, QueryResult, UserManager, storage::storage::DiskStorage,
 };
-use std::{collections::HashMap, path::Path};
 
 type UserName = String;
 type DatabaseName = String;
 
+pub(crate) const BASE_PATH: &str = "data";
+const GLOBAL_USER_PATH: &str = "data/global_users.bin";
+
 #[derive(Debug, Default)]
 pub struct DatabaseManager {
-    current_user: Option<String>,
-    active_db: Option<String>,
+    current_user: Option<UserName>,
+    active_db: Option<DatabaseName>,
     user_manager: UserManager,
     // Setiap database memiliki catalog dan tabelnya sendiri secara terisolasi
     databases: HashMap<(UserName, DatabaseName), Database>,
@@ -21,7 +25,8 @@ impl DatabaseManager {
     // ==========================================
     pub fn new() -> Self {
         // Pastikan direktori fisik untuk user 'root' selalu ada di disk
-        let _ = std::fs::create_dir_all("Data_base/root");
+        let root_user_path = Path::new(BASE_PATH).join("root");
+        let _ = std::fs::create_dir_all(root_user_path);
 
         let mut manager = Self {
             current_user: Some("root".to_string()),
@@ -32,6 +37,7 @@ impl DatabaseManager {
 
         // Otomatis load data user dari disk jika file global_users.bin sudah ada
         let _ = manager.load_users();
+        let _ = manager.save_users();
 
         manager
     }
@@ -115,14 +121,13 @@ impl DatabaseManager {
     // ==========================================
     // DISK MANAGEMENT
     // ==========================================
-    const GLOBAL_USER_PATH: &str = "Data_base/global_users.bin";
 
     pub fn save_users(&self) -> Result<(), DomainError> {
-        DiskStorage::save_to_file(Path::new(Self::GLOBAL_USER_PATH), &self.user_manager)
+        DiskStorage::save_to_file(Path::new(GLOBAL_USER_PATH), &self.user_manager)
     }
 
     pub fn load_users(&mut self) -> Result<(), DomainError> {
-        let path = Path::new(Self::GLOBAL_USER_PATH);
+        let path = Path::new(GLOBAL_USER_PATH);
         if path.exists() {
             self.user_manager = DiskStorage::load_from_file(path)?;
         }
@@ -184,9 +189,9 @@ impl DatabaseManager {
             self.active_db = Some(new_db_name.to_string());
         }
 
-        // 3. Ubah nama folder fisik di disk secara serentak (`Data_base/{username}/{old_name}` -> `{new_name}`)
-        let old_dir = format!("Data_base/{}/{}", username, old_db_name.to_lowercase());
-        let new_dir = format!("Data_base/{}/{}", username, new_db_name.to_lowercase());
+        // 3. Ubah nama folder fisik di disk secara serentak (`data/{username}/{old_name}` -> `{new_name}`)
+        let old_dir = format!("{BASE_PATH}/{}/{}", username, old_db_name.to_lowercase());
+        let new_dir = format!("{BASE_PATH}/{}/{}", username, new_db_name.to_lowercase());
 
         let old_path = Path::new(&old_dir);
         let new_path = Path::new(&new_dir);
@@ -224,8 +229,8 @@ impl DatabaseManager {
             self.active_db = None;
         }
 
-        // 3. Hapus folder fisik di disk secara serentak (`Data_base/{username}/{dbname}`)
-        let db_dir = format!("Data_base/{}/{}", username, db_name.to_lowercase());
+        // 3. Hapus folder fisik di disk secara serentak (`data/{username}/{dbname}`)
+        let db_dir = format!("{BASE_PATH}/{}/{}", username, db_name.to_lowercase());
         let path = Path::new(&db_dir);
         if path.exists() {
             std::fs::remove_dir_all(path).map_err(|e| {
@@ -250,6 +255,7 @@ impl DatabaseManager {
             ));
         }
         self.user_manager.create_user(username, password_hash)?;
+
         self.save_users()
     }
 
@@ -257,6 +263,7 @@ impl DatabaseManager {
         self.user_manager.authenticate(username, password)?;
         self.current_user = Some(username.to_string());
         self.active_db = None;
+
         Ok(())
     }
 
@@ -270,6 +277,23 @@ impl DatabaseManager {
             .change_password(&username, old_password, new_password)?;
 
         self.save_users()
+    }
+
+    pub fn rename_user(
+        &mut self,
+        old_username: &str,
+        new_username: &str,
+    ) -> Result<(), DomainError> {
+        self.user_manager.rename_user(old_username, new_username)
+    }
+    pub fn drop_user(&mut self, username: &str) -> Result<(), DomainError> {
+        if self.current_username()? != "root" {
+            return Err(DomainError::catalog(
+                "Akses ditolak: memerlukan hak akses root.",
+            ));
+        }
+
+        self.user_manager.drop_user(username)
     }
 }
 

@@ -1,6 +1,8 @@
 //! Physical operator untuk pemindaian berbasis indeks (*Index Scan*).
 
-use crate::{BufferPoolManager, DomainError, Row, Schema, execution::operator::PhysicalOperator};
+use crate::{
+    DomainError, Row, Schema, disk::BufferPoolManager, execution::operator::PhysicalOperator,
+};
 
 pub struct IndexScanOperator {
     matching_rows: Vec<Row>,

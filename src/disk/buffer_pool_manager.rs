@@ -1,6 +1,7 @@
-use crate::DomainError;
-use crate::buffer_lru_replacer::{FrameId, LRUReplacer};
-use crate::disk_manager::{DiskManager, PAGE_SIZE, PageId};
+use crate::{
+    DomainError,
+    disk::{DiskManager, FrameId, LRUReplacer, PAGE_SIZE, PageId},
+};
 use std::collections::HashMap;
 
 #[derive(Debug)]

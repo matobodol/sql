@@ -3,7 +3,7 @@ use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::{DataType, DomainError, SqlBool};
+use crate::{Bool3VL, DataType, DomainError};
 
 /// Representasi Nilai Data SQL di Runtime dengan Zero-Copy Cheap Clone (O(1)).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -225,68 +225,68 @@ impl ValueType {
     }
 
     /// EQUAL (=)
-    pub fn eq(&self, other: &ValueType) -> SqlBool {
+    pub fn eq(&self, other: &ValueType) -> Bool3VL {
         if self.is_null() || other.is_null() {
-            SqlBool::Unknown
+            Bool3VL::Unknown
         } else {
-            SqlBool::from(self.cmp(other) == Ordering::Equal)
+            Bool3VL::from(self.cmp(other) == Ordering::Equal)
         }
     }
 
     /// NOT EQUAL (!= atau <>)
-    pub fn noteq(&self, other: &Self) -> SqlBool {
+    pub fn noteq(&self, other: &Self) -> Bool3VL {
         self.eq(other).not()
     }
 
     /// GREATER THAN (>)
-    pub fn gt(&self, other: &Self) -> SqlBool {
+    pub fn gt(&self, other: &Self) -> Bool3VL {
         if self.is_null() || other.is_null() {
-            SqlBool::Unknown
+            Bool3VL::Unknown
         } else {
-            SqlBool::from(self.cmp(other) == Ordering::Greater)
+            Bool3VL::from(self.cmp(other) == Ordering::Greater)
         }
     }
 
     /// LESS THAN (<)
-    pub fn lt(&self, other: &Self) -> SqlBool {
+    pub fn lt(&self, other: &Self) -> Bool3VL {
         if self.is_null() || other.is_null() {
-            SqlBool::Unknown
+            Bool3VL::Unknown
         } else {
-            SqlBool::from(self.cmp(other) == Ordering::Less)
+            Bool3VL::from(self.cmp(other) == Ordering::Less)
         }
     }
 
     /// GREATER THAN OR EQUAL (>=)
-    pub fn gteq(&self, other: &Self) -> SqlBool {
+    pub fn gteq(&self, other: &Self) -> Bool3VL {
         if self.is_null() || other.is_null() {
-            SqlBool::Unknown
+            Bool3VL::Unknown
         } else {
             let cmp = matches!(self.cmp(other), Ordering::Greater | Ordering::Equal);
-            SqlBool::from(cmp)
+            Bool3VL::from(cmp)
         }
     }
 
     /// LESS THAN OR EQUAL (<=)
-    pub fn lteq(&self, other: &Self) -> SqlBool {
+    pub fn lteq(&self, other: &Self) -> Bool3VL {
         if self.is_null() || other.is_null() {
-            SqlBool::Unknown
+            Bool3VL::Unknown
         } else {
             let cmp = matches!(self.cmp(other), Ordering::Less | Ordering::Equal);
-            SqlBool::from(cmp)
+            Bool3VL::from(cmp)
         }
     }
 
     /// OPERATOR LOGIKA AND
-    pub fn and(&self, other: &Self) -> Result<SqlBool, DomainError> {
-        let r = SqlBool::try_from(self)?;
-        let l = SqlBool::try_from(other)?;
+    pub fn and(&self, other: &Self) -> Result<Bool3VL, DomainError> {
+        let r = Bool3VL::try_from(self)?;
+        let l = Bool3VL::try_from(other)?;
         Ok(l.and(r))
     }
 
     /// OPERATOR LOGIKA OR
-    pub fn or(&self, other: &Self) -> Result<SqlBool, DomainError> {
-        let l = SqlBool::try_from(self)?;
-        let r = SqlBool::try_from(other)?;
+    pub fn or(&self, other: &Self) -> Result<Bool3VL, DomainError> {
+        let l = Bool3VL::try_from(self)?;
+        let r = Bool3VL::try_from(other)?;
         Ok(l.or(r))
     }
 }
@@ -368,18 +368,18 @@ impl PartialOrd for ValueType {
 // IMPLEMENTASI `From` (Mengubah Tipe Rust -> SqlValue)
 // =============================================================================
 
-impl From<&SqlBool> for ValueType {
-    fn from(sb: &SqlBool) -> Self {
+impl From<&Bool3VL> for ValueType {
+    fn from(sb: &Bool3VL) -> Self {
         match sb {
-            SqlBool::True => ValueType::Bool(true),
-            SqlBool::False => ValueType::Bool(false),
-            SqlBool::Unknown => ValueType::Null,
+            Bool3VL::True => ValueType::Bool(true),
+            Bool3VL::False => ValueType::Bool(false),
+            Bool3VL::Unknown => ValueType::Null,
         }
     }
 }
 
-impl From<SqlBool> for ValueType {
-    fn from(sb: SqlBool) -> Self {
+impl From<Bool3VL> for ValueType {
+    fn from(sb: Bool3VL) -> Self {
         ValueType::from(&sb)
     }
 }

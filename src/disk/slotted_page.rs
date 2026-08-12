@@ -1,4 +1,7 @@
-use crate::{DomainError, PAGE_SIZE, PageId};
+use crate::{
+    DomainError,
+    disk::{PAGE_SIZE, PageId},
+};
 
 pub type SlotId = u16;
 
