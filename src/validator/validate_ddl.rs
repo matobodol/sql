@@ -1,6 +1,6 @@
 use std::{collections::HashSet, sync::Arc};
 
-use crate::{DdlAction, DomainError, TableAction, catalog::CatalogStore};
+// use crate::{DdlAction, DomainError, TableAction, catalog::CatalogStore};
 
 pub(crate) fn validate_alter_table(
     catalog: &CatalogStore,

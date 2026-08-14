@@ -1,9 +1,9 @@
 use std::{collections::HashMap, path::Path, sync::Arc};
 
 use crate::{
-    Column, ColumnConstraint, ColumnId, DataType, DomainError, QueryResult, Row, RowId, Schema,
-    TableContext, TableId, ValueType,
-    catalog::CatalogStore,
+    Column, ColumnConstraint, ColumnId, DataType, DomainError, Row, RowId, Schema, TableContext,
+    TableId, ValueType,
+    catalog::{CatalogStore, QueryResult},
     disk::{BufferPoolManager, DiskManager, TableHeap},
     index::IndexRegistry,
 };
@@ -25,30 +25,44 @@ pub(crate) fn apply_create_table(
         }
     }
 
-    // Inisialisasi file fisik .db khusus untuk tabel baru di dalam folder database terkait
+    // Inisialisasi file fisik .db khusus untuk tabel baru
     let table_file_path = Path::new(db_path).join(format!("{}.db", table_name));
     let disk_manager = DiskManager::new(&table_file_path)?;
     let mut buffer_pool_manager = BufferPoolManager::new(disk_manager, 10);
     let table_heap = TableHeap::new(&mut buffer_pool_manager)?;
 
-    // --- TAMBAHAN: Inisialisasi auto_increment_counters dari Schema tabel baru ---
     let schema = catalog.get_schema(table_id)?;
     let mut auto_increment_counters = HashMap::new();
 
+    // --- TAMBAHAN: Inisialisasi IndexRegistry dan daftarkan kolom unik ---
+    let mut index_registry = IndexRegistry::new(); //[span_4](start_span)[span_4](end_span)
+
     for col in schema.columns() {
+        // 1. Cek konfigurasi auto increment
         if let Some(crate::schema::Increment::Enabled { start, .. }) = col.auto_increment_config() {
             auto_increment_counters.insert(col.id, *start);
         }
+
+        // 2. Cek apakah kolom memiliki constraint Unique atau PrimaryKey[span_5](start_span)[span_5](end_span)[span_6](start_span)[span_6](end_span)
+        let is_unique = col
+            .constraints
+            .iter()
+            .any(|c| matches!(c, ColumnConstraint::Unique | ColumnConstraint::PrimaryKey));
+
+        if is_unique {
+            // Buat indeks B-Tree unik secara otomatis[span_7](start_span)[span_7](end_span)
+            index_registry.create_btree_index(col.id, true)?; //[span_8](start_span)[span_8](end_span)
+        }
     }
-    // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------
 
     tables.insert(
         table_id,
         TableContext {
             table_heap,
             buffer_pool_manager,
-            index_registry: IndexRegistry::new(),
-            auto_increment_counters, // <-- Masukkan ke TableContext
+            index_registry, // Masukkan index_registry yang sudah terisi
+            auto_increment_counters,
         },
     );
 
@@ -94,21 +108,6 @@ pub(crate) fn apply_rename_table(
     Ok(())
 }
 
-pub(crate) fn execute_show_tables(list_tables: &[String]) -> Result<QueryResult, DomainError> {
-    let col_def = Column::new(ColumnId(1), "table_name", DataType::Text);
-    let schema = Schema::new(vec![col_def])?;
-
-    let mut rows = Vec::with_capacity(list_tables.len());
-
-    for (idx, name) in list_tables.into_iter().enumerate() {
-        let row_id = RowId((idx + 1) as u64);
-        let values = vec![ValueType::Text(Arc::from(name.as_str()))];
-        rows.push(Row::with_id(row_id, values));
-    }
-
-    Ok(QueryResult::Dql { schema, rows })
-}
-
 pub(crate) fn execute_describe_table(columns: &[Column]) -> Result<QueryResult, DomainError> {
     let desc_schema = Schema::new(vec![
         Column::new(ColumnId(1), "Field", DataType::Text),
@@ -124,19 +123,19 @@ pub(crate) fn execute_describe_table(columns: &[Column]) -> Result<QueryResult, 
     for (idx, col) in columns.iter().enumerate() {
         let row_id = RowId((idx + 1) as u64);
 
-        // Menentukan apakah kolom boleh bernilai NULL menggunakan is_nullable()[span_1](start_span)[span_1](end_span)
+        // Menentukan apakah kolom boleh bernilai NULL menggunakan is_nullable()
         let null_str = if col.is_nullable() { "YES" } else { "NO" };
 
-        // Menentukan status Primary Key menggunakan is_primary_key()[span_2](start_span)[span_2](end_span)
+        // Menentukan status Primary Key menggunakan is_primary_key()
         let key_str = if col.is_primary_key() { "PRI" } else { "" };
 
-        // Mengambil nilai default menggunakan default_value()[span_3](start_span)[span_3](end_span)
+        // Mengambil nilai default menggunakan default_value()
         let default_str = match col.default_value() {
             Some(val) => format!("{:?}", val),
             None => "NULL".to_string(),
         };
 
-        // Menentukan informasi ekstra (seperti auto_increment) menggunakan is_auto_increment()[span_4](start_span)[span_4](end_span)
+        // Menentukan informasi ekstra (seperti auto_increment) menggunakan is_auto_increment()
         let extra_str = if col.is_auto_increment() {
             "auto_increment"
         } else {
@@ -144,8 +143,8 @@ pub(crate) fn execute_describe_table(columns: &[Column]) -> Result<QueryResult, 
         };
 
         let values = vec![
-            ValueType::Text(Arc::from(col.name.clone())), // Field[span_5](start_span)[span_5](end_span)
-            ValueType::Text(Arc::from(format!("{:?}", col.sql_type))), // Type[span_6](start_span)[span_6](end_span)
+            ValueType::Text(Arc::from(col.name.clone())), // Field
+            ValueType::Text(Arc::from(format!("{:?}", col.sql_type))), // Type
             ValueType::Text(Arc::from(null_str)),
             ValueType::Text(Arc::from(key_str)),
             ValueType::Text(Arc::from(default_str)),
@@ -159,4 +158,19 @@ pub(crate) fn execute_describe_table(columns: &[Column]) -> Result<QueryResult, 
         schema: desc_schema,
         rows,
     })
+}
+
+pub(crate) fn virtual_column(list: Vec<String>) -> Result<(Schema, Vec<Row>), DomainError> {
+    let col_def = Column::new(ColumnId(1), "table_name", DataType::Text);
+    let schema = Schema::new(vec![col_def])?;
+
+    let mut rows = Vec::with_capacity(list.len());
+
+    for (idx, name) in list.into_iter().enumerate() {
+        let row_id = RowId((idx + 1) as u64);
+        let values = vec![ValueType::Text(Arc::from(name.as_str()))];
+        rows.push(Row::with_id(row_id, values));
+    }
+
+    Ok((schema, rows))
 }

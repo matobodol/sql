@@ -1,8 +1,9 @@
-use crate::{BASE_PATH, DomainError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
+
+use crate::DomainError;
+use crate::catalog::BASE_PATH;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Permission {
@@ -24,35 +25,6 @@ pub struct User {
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct UserManager {
     users: HashMap<String, User>,
-}
-
-impl UserManager {
-    // ==========================================
-    // DISK MANAGEMENT
-    // ==========================================
-    pub fn load_or_new<P: AsRef<Path>>(base_path: P) -> Result<Self, DomainError> {
-        let path = base_path.as_ref().join("users.json");
-        if path.exists() {
-            let data = fs::read_to_string(path)
-                .map_err(|e| DomainError::catalog(format!("Gagal membaca file user: {e}")))?;
-            let manager: UserManager = serde_json::from_str(&data)
-                .map_err(|e| DomainError::catalog(format!("Gagal parsing data user: {e}")))?;
-            Ok(manager)
-        } else {
-            let manager = Self::new();
-            manager.save(&base_path)?;
-            Ok(manager)
-        }
-    }
-
-    pub fn save<P: AsRef<Path>>(&self, base_path: P) -> Result<(), DomainError> {
-        let path = base_path.as_ref().join("users.json");
-        let data = serde_json::to_string_pretty(self)
-            .map_err(|e| DomainError::catalog(format!("Gagal serialisasi user: {e}")))?;
-        fs::write(path, data)
-            .map_err(|e| DomainError::catalog(format!("Gagal menyimpan file user: {e}")))?;
-        Ok(())
-    }
 }
 
 impl UserManager {
@@ -140,7 +112,7 @@ impl UserManager {
         }
 
         // Buat folder fisik untuk user baru: data/{username}
-        let user_dir = format!("{BASE_PATH}/{}", username.to_lowercase());
+        let user_dir = format!("{}/{}", BASE_PATH, username.to_lowercase());
         std::fs::create_dir_all(&user_dir)
             .map_err(|e| DomainError::storage(format!("Gagal membuat direktori user: {e}")))?;
 

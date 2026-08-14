@@ -1,14 +1,13 @@
 use std::{collections::HashMap, path::Path};
 
 use crate::{
-    CommandAction, Database, DomainError, QueryResult, UserManager, storage::storage::DiskStorage,
+    Database, DomainError,
+    catalog::{BASE_PATH, GLOBAL_USER_PATH, UserManager},
+    storage::storage::DiskStorage,
 };
 
 type UserName = String;
 type DatabaseName = String;
-
-pub(crate) const BASE_PATH: &str = "data";
-const GLOBAL_USER_PATH: &str = "data/global_users.bin";
 
 #[derive(Debug, Default)]
 pub struct DatabaseManager {
@@ -23,6 +22,7 @@ impl DatabaseManager {
     // ==========================================
     // KONSTRUKTOR & HELPER
     // ==========================================
+
     pub fn new() -> Self {
         // Pastikan direktori fisik untuk user 'root' selalu ada di disk
         let root_user_path = Path::new(BASE_PATH).join("root");
@@ -48,7 +48,7 @@ impl DatabaseManager {
     }
 
     #[inline]
-    fn current_username(&self) -> Result<&str, DomainError> {
+    pub fn current_username(&self) -> Result<&str, DomainError> {
         self.current_user
             .as_deref()
             .ok_or_else(|| DomainError::catalog("Tidak ada user yang sedang login."))
@@ -115,6 +115,38 @@ impl DatabaseManager {
             .get_mut(&target_key)
             .ok_or_else(|| DomainError::DatabaseNotFound(active_db_name.clone().into()))
     }
+    pub fn active_database_ref(&self) -> Result<&Database, DomainError> {
+        let username = self.current_username()?.to_lowercase();
+        let active_db_name = self
+            .active_db
+            .as_ref()
+            .ok_or(DomainError::NoActiveDatabase)?;
+        let db_key = active_db_name.to_lowercase();
+
+        let is_admin = self.user_manager.is_admin(&username)?;
+
+        let target_key = if is_admin {
+            self.databases
+                .keys()
+                .find(|(_, d)| d == &db_key)
+                .cloned()
+                .ok_or_else(|| DomainError::DatabaseNotFound(active_db_name.clone().into()))?
+        } else {
+            (username, db_key)
+        };
+
+        self.databases
+            .get(&target_key)
+            .ok_or_else(|| DomainError::DatabaseNotFound(active_db_name.clone().into()))
+    }
+
+    pub fn list_databases(&self) -> Vec<String> {
+        self.databases
+            .keys()
+            .into_iter()
+            .map(|(_, db)| db.clone())
+            .collect()
+    }
 }
 
 impl DatabaseManager {
@@ -148,9 +180,18 @@ impl DatabaseManager {
         }
 
         // Mengirim username dan db_name ke constructor Database
-        let db = Database::new(username, db_name);
+        if let Ok(db) = Database::load_from_disk(username, db_name) {
+            self.databases.insert(composite_key, db);
+            return Err(DomainError::catalog("database already axis"));
+        } else {
+            let db = Database::new(username, db_name);
+            self.databases.insert(composite_key, db);
+        }
 
-        self.databases.insert(composite_key, db);
+        let username = self.current_username()?.to_string();
+        if let Some(db) = self.databases.get_mut(&(username, db_name.to_string())) {
+            db.save_to_disk()?;
+        }
         Ok(())
     }
 
@@ -251,11 +292,11 @@ impl DatabaseManager {
         let current = self.current_username()?.to_lowercase();
         if !self.user_manager.is_admin(&current)? {
             return Err(DomainError::catalog(
-                "Hanya admin yang dapat membuat user baru.",
+                "Akses ditolak: memerlukan hak akses root.",
             ));
         }
-        self.user_manager.create_user(username, password_hash)?;
 
+        self.user_manager.create_user(username, password_hash)?;
         self.save_users()
     }
 
@@ -275,7 +316,6 @@ impl DatabaseManager {
         let username = self.current_username()?.to_string();
         self.user_manager
             .change_password(&username, old_password, new_password)?;
-
         self.save_users()
     }
 
@@ -284,8 +324,10 @@ impl DatabaseManager {
         old_username: &str,
         new_username: &str,
     ) -> Result<(), DomainError> {
-        self.user_manager.rename_user(old_username, new_username)
+        self.user_manager.rename_user(old_username, new_username)?;
+        self.save_users()
     }
+
     pub fn drop_user(&mut self, username: &str) -> Result<(), DomainError> {
         if self.current_username()? != "root" {
             return Err(DomainError::catalog(
@@ -293,18 +335,19 @@ impl DatabaseManager {
             ));
         }
 
-        self.user_manager.drop_user(username)
+        self.user_manager.drop_user(username)?;
+        self.save_users()
     }
 }
 
-impl DatabaseManager {
-    // ==========================================
-    // EXECUTION FACADE
-    // ==========================================
-
-    pub fn execute(&mut self, action: CommandAction) -> Result<QueryResult, DomainError> {
-        // Ambil referensi mutabel ke database aktif, lalu delegasikan eksekusi perintah ke `Database`
-        let db = self.active_database_mut()?;
-        db.execute(action)
-    }
-}
+// impl DatabaseManager {
+//     // ==========================================
+//     // EXECUTION FACADE
+//     // ==========================================
+//
+//     pub fn execute(&mut self, action: CommandAction) -> Result<QueryResult, DomainError> {
+//         // Ambil referensi mutabel ke database aktif, lalu delegasikan eksekusi perintah ke `Database`
+//         let db = self.active_database_mut()?;
+//         db.execute(action)
+//     }
+// }

@@ -1,5 +1,4 @@
-use crate::catalog::CatalogStore;
-use crate::command::QueryResult;
+use crate::catalog::{CatalogStore, QueryResult};
 use crate::disk::{BufferPoolManager, TableHeap};
 use crate::execution::PhysicalPlanner;
 use crate::{DomainError, Schema, SelectStmt, TableId};

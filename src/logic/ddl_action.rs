@@ -278,13 +278,13 @@ pub(crate) fn apply_drop_constraint(
     catalog: &mut CatalogStore,
     table_name: &str,
     col_name: &str,
-    constraint: &ColumnConstraint,
+    constraint: ColumnConstraint,
 ) -> Result<(), DomainError> {
     let table_id = catalog.get_table_id(table_name)?;
     let col_id = catalog.get_column_id(table_id, col_name)?;
 
     catalog.mutate_column(table_id, col_id, |col| {
-        col.constraints.retain(|c| c != constraint);
+        col.constraints.retain(|c| c != &constraint);
     })?;
 
     Ok(())

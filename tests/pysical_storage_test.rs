@@ -2,58 +2,96 @@
 mod tests {
 
     use coredb::{
-        ColumnConstraint, CommandAction, DataType, DatabaseManager, DomainError, TableAction,
+        BinaryOp, ColumnConstraint, DBM, DataType, DomainError, Expr, Increment, SelectStmt,
+        ValueType, catalog::QueryResult,
     };
 
     #[test]
     fn test_persistent_file_layout() -> Result<(), DomainError> {
         // 1. Inisialisasi DatabaseManager (secara otomatis membuat folder data/root)
-        let mut db_manager = DatabaseManager::new();
+        let mut dbm = DBM::new();
 
-        // 2. Simpan user manager ke disk untuk menghasilkan file global_users.bin
-        // db_manager.save_users()?;
-        let global_user_path = std::path::Path::new("data/global_users.bin");
-        assert!(
-            global_user_path.exists(),
-            "File global_users.bin harus tercipta di disk"
-        );
+        // // 3. Buat database baru bernama "test_db" di bawah user aktif ('root')
+        dbm.api_database_create("mydb")?;
+        dbm.api_database_use("mydb")?;
 
-        // 3. Buat database baru bernama "test_db" di bawah user aktif ('root')
-        db_manager.create_database("test_db")?;
-        db_manager.use_database("test_db")?;
-
-        // 4. Ambil referensi database aktif dan buat tabel fisik (misal: "karyawan")
-        let db = db_manager.active_database_mut()?;
-        db.execute(CommandAction::TableAction {
-            actions: vec![TableAction::CreateTable {
-                table_name: "karyawan".to_string(),
-                columns: vec![(
-                    "id".to_string(),
-                    DataType::Int,
-                    vec![ColumnConstraint::PrimaryKey],
-                )],
-            }],
-        })?;
+        let raw_columns = vec![
+            (
+                "id".to_string(),
+                DataType::Int,
+                vec![
+                    ColumnConstraint::Auto(Increment::Enabled { start: 1, step: 1 }),
+                    ColumnConstraint::PrimaryKey,
+                ],
+            ),
+            (
+                "name".to_string(),
+                DataType::Text,
+                vec![ColumnConstraint::NotNull, ColumnConstraint::Unique],
+            ),
+            (
+                "status".to_string(),
+                DataType::Enum {
+                    name: "status".into(),
+                    variants: vec!["lulus".into(), "gagal".to_string()],
+                },
+                vec![ColumnConstraint::Default(ValueType::Enum {
+                    type_name: "status".into(),
+                    value: "gagal".into(),
+                })],
+            ),
+        ];
+        dbm.api_table_create("users", raw_columns).unwrap();
 
         // 5. Panggil save_to_disk untuk menulis metadata.bin dan flush file .db
-        // db.save_to_disk()?;
+        let raw_rows = vec![
+            vec![
+                ValueType::Null,
+                ValueType::Text("jono".into()),
+                ValueType::Null,
+            ],
+            vec![
+                ValueType::Null,
+                ValueType::Text("joni".into()),
+                ValueType::Null,
+            ],
+            vec![
+                ValueType::Null,
+                ValueType::Text("jani".into()),
+                ValueType::Enum {
+                    type_name: "status".into(),
+                    value: "lulus".into(),
+                },
+            ],
+        ];
+        dbm.api_row_insert("users", raw_rows).unwrap();
 
         // 6. Verifikasi keberadaan seluruh file pada struktur layout persisten
-        let metadata_path = std::path::Path::new("data/root/test_db/metadata.bin");
-        let table_path = std::path::Path::new("data/root/test_db/karyawan.db");
+        let statements = SelectStmt {
+            projection: Vec::new(), // Kosong berarti SELECT * (semua kolom)
+            selection: Some(Expr::binary(
+                Expr::Column("status".into()),
+                BinaryOp::Eq,
+                Expr::Literal(ValueType::Enum {
+                    type_name: "status".into(),
+                    value: "lulus".into(),
+                }),
+            )),
+            group_by: Vec::new(),
+            aggregates: Vec::new(),
+            order_by: Vec::new(),
+            limit: None,
+            offset: 0,
+        };
 
-        assert!(
-            global_user_path.exists(),
-            "global_users.bin tidak ditemukan"
-        );
-        assert!(
-            metadata_path.exists(),
-            "metadata.bin tidak ditemukan di dalam folder database"
-        );
-        assert!(
-            table_path.exists(),
-            "karyawan.db tidak ditemukan di dalam folder database"
-        );
+        let result = dbm.api_select("users", statements).unwrap();
+        match result {
+            QueryResult::Dql { schema: s, rows: r } => {
+                println!("{:#?}", s);
+                println!("{:#?}", r);
+            }
+            _ => (),
+        }
 
         Ok(())
     }

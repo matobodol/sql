@@ -115,7 +115,7 @@ impl Schema {
         Ok(())
     }
 
-    pub fn validate_schema_columns(columns: &[Column]) -> Result<(), DomainError> {
+    fn validate_schema_columns(columns: &[Column]) -> Result<(), DomainError> {
         let mut seen_names = HashSet::with_capacity(columns.len());
 
         for col in columns {
@@ -312,7 +312,7 @@ impl Schema {
 
     #[inline]
     pub fn get_column_index_by_name(&self, name: &str) -> Option<usize> {
-        self.index(name)
+        self.index_of_name(name)
     }
 
     #[inline]
@@ -322,7 +322,7 @@ impl Schema {
 
     #[inline]
     pub fn get_column_by_name(&self, name: &str) -> Option<&Column> {
-        self.index(name).map(|idx| &self.columns[idx])
+        self.index_of_name(name).map(|idx| &self.columns[idx])
     }
 
     #[inline]
@@ -349,37 +349,13 @@ impl Schema {
     pub fn bound_table_checks(&self) -> &[Expr] {
         &self.bound_table_checks
     }
-
-    #[inline]
-    pub fn index_of(&self, col_name: &str) -> Option<usize> {
-        self.index(col_name)
-    }
-
-    pub fn index(&self, col_name: &str) -> Option<usize> {
-        if let Some(idx) = self
-            .columns
-            .iter()
-            .position(|c| c.name.eq_ignore_ascii_case(col_name))
-        {
-            return Some(idx);
-        }
-
-        if let Some((_table, col)) = col_name.split_once('.') {
-            return self
-                .columns
-                .iter()
-                .position(|c| c.name.eq_ignore_ascii_case(col));
-        }
-
-        None
-    }
 }
 
 pub fn bind_expr_columns(expr: &Expr, schema: &Schema) -> Result<Expr, DomainError> {
     match expr {
         Expr::Column(name) => {
             let idx = schema
-                .index(name)
+                .index_of_name(name)
                 .ok_or_else(|| DomainError::ColumnNotFound(Arc::from(name.as_str())))?;
 
             Ok(Expr::ColumnIndex(idx))

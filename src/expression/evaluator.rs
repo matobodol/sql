@@ -107,6 +107,6 @@ fn eval_binary_op(
 #[inline]
 pub fn eval_where(expr: &Expr, row: &Row) -> Result<bool, DomainError> {
     let result = eval_expr(expr, row)?;
-    let sql_bool = Bool3VL::try_from(result.as_ref())?;
-    Ok(sql_bool.is_true())
+    let bool_3vl = Bool3VL::try_from(result.as_ref())?;
+    Ok(bool_3vl.is_true())
 }

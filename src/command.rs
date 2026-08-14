@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::{
-    ColumnConstraint, ColumnId, DataType, DomainError, Expr, Row, Schema, SelectStmt, TableContext,
-    TableId, ValueType,
+    ColumnConstraint, ColumnId, ColumnPosition, DataType, DomainError, Expr, QueryResult,
+    SelectStmt, TableContext, TableId, ValueType,
     catalog::CatalogStore,
     disk::{BufferPoolManager, TableHeap},
     index::IndexRegistry,
@@ -13,22 +13,6 @@ use crate::{
     },
     validator::{validate_alter_table, validate_table_action},
 };
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum QueryResult {
-    Inserted(usize),
-    Updated(usize),
-    Deleted(usize),
-    Dql { schema: Schema, rows: Vec<Row> },
-    OK,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ColumnPosition {
-    Default,
-    First,
-    After(String),
-}
 
 /// Konsolidasi aksi tingkat tabel agar mendukung batch/multi-aksi secara seragam.
 #[derive(Debug, Clone, PartialEq)]
@@ -83,7 +67,7 @@ pub enum DmlAction {
         rows: Vec<Vec<ValueType>>,
     },
     Update {
-        assignments: HashMap<ColumnId, Expr>,
+        assignments: HashMap<String, Expr>,
         predicate: Option<Expr>,
     },
     Delete {
@@ -120,6 +104,7 @@ pub enum CommandAction {
     },
 }
 
+#[allow(warnings)]
 pub(crate) fn execute_table_action(
     catalog: &mut CatalogStore,
     tables: &mut HashMap<TableId, TableContext>,
@@ -152,56 +137,58 @@ pub(crate) fn execute_table_action(
     Ok(())
 }
 
+#[allow(warnings)]
 pub(crate) fn execute_alter_table(
     catalog: &mut CatalogStore,
     tables: &mut HashMap<TableId, TableContext>,
-    name: &str,
+    table_name: &str,
     actions: Vec<DdlAction>,
 ) -> Result<(), DomainError> {
     // === FASE 1: PRE-CHECK (Dry-Run Validasi Skema) ===
-    validate_alter_table(catalog, name, &actions)?;
+    validate_alter_table(catalog, table_name, &actions)?;
 
     // === FASE 2: EKSEKUSI NYATA (Mutation) ===
     for action in actions {
         match action {
             DdlAction::AddColumns { columns } => {
-                apply_add_columns(catalog, tables, name, columns)?;
+                apply_add_columns(catalog, tables, table_name, columns)?;
             }
             DdlAction::DropColumn { col_name } => {
-                apply_drop_column(catalog, tables, name, &col_name)?;
+                apply_drop_column(catalog, tables, table_name, &col_name)?;
             }
             DdlAction::RenameColumn {
                 old_col_name,
                 new_col_name,
             } => {
-                apply_rename_column(catalog, name, &old_col_name, &new_col_name)?;
+                apply_rename_column(catalog, table_name, &old_col_name, &new_col_name)?;
             }
             DdlAction::ModifyColumnType { col_name, new_type } => {
-                apply_modify_column_type(catalog, name, &col_name, new_type)?;
+                apply_modify_column_type(catalog, table_name, &col_name, new_type)?;
             }
             DdlAction::AddConstraint {
                 col_name,
                 constraint,
             } => {
-                apply_add_constraint(catalog, tables, name, &col_name, constraint)?;
+                apply_add_constraint(catalog, tables, table_name, &col_name, constraint)?;
             }
             DdlAction::DropConstraint {
                 col_name,
                 constraint,
             } => {
-                apply_drop_constraint(catalog, name, &col_name, &constraint)?;
+                apply_drop_constraint(catalog, table_name, &col_name, constraint)?;
             }
             DdlAction::SetDefault {
                 col_name,
                 default_val,
             } => {
-                apply_set_default(catalog, name, &col_name, default_val)?;
+                apply_set_default(catalog, table_name, &col_name, default_val)?;
             }
         }
     }
     Ok(())
 }
 
+#[allow(warnings)]
 pub(crate) fn execute_dml_action(
     catalog: &CatalogStore,
     table_heap: &mut TableHeap,
@@ -228,13 +215,19 @@ pub(crate) fn execute_dml_action(
             assignments,
             predicate,
         } => {
+            let mut fixed_assignments = HashMap::new();
+            for (name, expr) in assignments.into_iter() {
+                let id = catalog.get_column_id(table_id, &name)?;
+                fixed_assignments.insert(id, expr);
+            }
+
             let updated_count = handle_update(
                 catalog,
                 table_heap,
                 bpm,
-                index_registry, // Teruskan ke handler
+                index_registry,
                 table_id,
-                &assignments,
+                &fixed_assignments,
                 predicate.as_ref(),
             )?;
             Ok(QueryResult::Updated(updated_count))
@@ -244,7 +237,7 @@ pub(crate) fn execute_dml_action(
                 catalog,
                 table_heap,
                 bpm,
-                index_registry, // Teruskan ke handler
+                index_registry,
                 table_id,
                 predicate.as_ref(),
             )?;

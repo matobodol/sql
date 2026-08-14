@@ -8,7 +8,12 @@ use crate::{
     catalog::id::IdGenerator,
 };
 
-pub const ADMIN: &str = "root";
+pub const DEFAULT_ADMIN: &str = "root";
+pub const BASE_PATH: &str = ".data";
+pub const GLOBAL_USER_PATH: &str = ".data/GLOBAL_USER.bin";
+pub const EXT_AUTO_INC: &str = ".auto_inc";
+pub const EXT_INDEX_REGISTRY: &str = ".index";
+pub const METADATA: &str = "METADATA.bin";
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct CatalogStore {
@@ -58,6 +63,18 @@ impl CatalogStore {
             .get(&(table_id, name.to_string()))
             .copied()
             .ok_or_else(|| DomainError::ColumnNotFound(Arc::from(name)))
+    }
+
+    #[inline]
+    pub fn get_column_name(
+        &self,
+        table_id: TableId,
+        col_id: ColumnId,
+    ) -> Result<String, DomainError> {
+        self.column_to_name
+            .get(&(table_id, col_id))
+            .map(|n| n.clone())
+            .ok_or_else(|| DomainError::eval_error("column id tidak ditemukan"))
     }
 
     pub fn register_table(&mut self, name: &str) -> Result<TableId, DomainError> {
@@ -131,6 +148,7 @@ impl CatalogStore {
             .insert((table_id, name.to_string()), col_id);
         self.column_to_name
             .insert((table_id, col_id), name.to_string());
+
         self.table_schemas.insert(table_id, Arc::new(new_schema));
 
         Ok(col_id)

@@ -2,6 +2,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{ColumnConstraint, ColumnId, DataType, ValueType, schema::Increment};
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum ColumnPosition {
+    Default,
+    First,
+    After(String),
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Column {
     pub id: ColumnId, // Source of Truth Identifier

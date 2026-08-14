@@ -7,7 +7,7 @@ use crate::{Bool3VL, DataType, DomainError};
 
 /// Representasi Nilai Data SQL di Runtime dengan Zero-Copy Cheap Clone (O(1)).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(untagged)]
+// #[serde(untagged)]
 pub enum ValueType {
     /// Representasi tidak ada nilai
     Null,
