@@ -3,6 +3,7 @@ use std::{collections::HashMap, path::Path};
 
 use crate::catalog::{BASE_PATH, EXT_AUTO_INC, EXT_INDEX_REGISTRY, METADATA};
 use crate::disk::{BufferPoolManager, DiskManager, TableHeap};
+use crate::expression::evaluator::bind_expr;
 use crate::index::IndexRegistry;
 use crate::logic::table_action::virtual_column;
 use crate::logic::{
@@ -322,9 +323,40 @@ impl Database {
         let mut assignments = HashMap::new();
         for (name, expr) in assign {
             let col_id = self.catalog.get_column_id(table_id, &name)?;
-            assignments.insert(col_id, expr);
+
+            // Bind juga ekspresi di assignment jika mengandung kolom
+            let bound_expr = bind_expr(&expr, &|col_name| {
+                let schema_cols = self.catalog.get_schema_columns(table_id)?;
+                schema_cols
+                    .iter()
+                    .position(|col| col.name == col_name)
+                    .ok_or_else(|| {
+                        DomainError::eval_error(format!("Kolom '{col_name}' tidak ditemukan"))
+                    })
+            })?;
+
+            assignments.insert(col_id, bound_expr);
         }
 
+        // 1. Bind predicate jika ada agar Expr::Column berubah menjadi Expr::ColumnIndex
+        let bound_predicate = match predicate {
+            Some(expr) => {
+                let bound = bind_expr(&expr, &|col_name| {
+                    // Ambil posisi index kolom berdasarkan nama dari skema/katalog tabel
+                    let schema_cols = self.catalog.get_schema_columns(table_id)?;
+                    schema_cols
+                        .iter()
+                        .position(|col| col.name == col_name)
+                        .ok_or_else(|| {
+                            DomainError::eval_error(format!("Kolom '{col_name}' tidak ditemukan"))
+                        })
+                })?;
+                Some(bound)
+            }
+            None => None,
+        };
+
+        // 2. Kirim bound_predicate.as_ref() ke handle_update
         let updated_count = handle_update(
             &self.catalog,
             &mut context.table_heap,
@@ -332,8 +364,18 @@ impl Database {
             &mut context.index_registry,
             table_id,
             &assignments,
-            predicate.as_ref(),
+            bound_predicate.as_ref(),
         )?;
+
+        // let updated_count = handle_update(
+        //     &self.catalog,
+        //     &mut context.table_heap,
+        //     &mut context.buffer_pool_manager,
+        //     &mut context.index_registry,
+        //     table_id,
+        //     &assignments,
+        //     predicate.as_ref(),
+        // )?;
         Ok(QueryResult::Updated(updated_count))
     }
 

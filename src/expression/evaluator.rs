@@ -110,3 +110,51 @@ pub fn eval_where(expr: &Expr, row: &Row) -> Result<bool, DomainError> {
     let bool_3vl = Bool3VL::try_from(result.as_ref())?;
     Ok(bool_3vl.is_true())
 }
+
+pub fn bind_expr(
+    expr: &Expr,
+    get_col_index: &impl Fn(&str) -> Result<usize, DomainError>,
+) -> Result<Expr, DomainError> {
+    match expr {
+        // Ubah string nama kolom menjadi indeks offset O(1)
+        Expr::Column(name) => {
+            let idx = get_col_index(name)?;
+            Ok(Expr::ColumnIndex(idx))
+        }
+        Expr::Literal(val) => Ok(Expr::Literal(val.clone())),
+        Expr::ColumnIndex(idx) => Ok(Expr::ColumnIndex(*idx)),
+
+        Expr::Binary { left, op, right } => {
+            let bound_left = Box::new(bind_expr(left, get_col_index)?);
+            let bound_right = Box::new(bind_expr(right, get_col_index)?);
+            Ok(Expr::Binary {
+                left: bound_left,
+                op: *op,
+                right: bound_right,
+            })
+        }
+        Expr::Not(inner) => {
+            let bound_inner = Box::new(bind_expr(inner, get_col_index)?);
+            Ok(Expr::Not(bound_inner))
+        }
+        Expr::IsNull(inner) => {
+            let bound_inner = Box::new(bind_expr(inner, get_col_index)?);
+            Ok(Expr::IsNull(bound_inner))
+        }
+        Expr::IsNotNull(inner) => {
+            let bound_inner = Box::new(bind_expr(inner, get_col_index)?);
+            Ok(Expr::IsNotNull(bound_inner))
+        }
+        Expr::InList { expr, list } => {
+            let bound_expr = Box::new(bind_expr(expr, get_col_index)?);
+            let mut bound_list = Vec::with_capacity(list.len());
+            for item in list {
+                bound_list.push(bind_expr(item, get_col_index)?);
+            }
+            Ok(Expr::InList {
+                expr: bound_expr,
+                list: bound_list,
+            })
+        }
+    }
+}
