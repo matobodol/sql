@@ -16,6 +16,11 @@ pub(crate) fn apply_create_table(
     table_name: &str,
     raw_columns: Vec<(String, DataType, Vec<ColumnConstraint>)>,
 ) -> Result<(), DomainError> {
+    if raw_columns.is_empty() {
+        return Err(DomainError::catalog(
+            "Table tidak boleh kosong, setidaknya buat 1 kolom.",
+        ));
+    }
     let table_id = catalog.register_table(table_name)?;
 
     for (col_name, sql_type, constraints) in raw_columns {
@@ -24,6 +29,7 @@ pub(crate) fn apply_create_table(
             return Err(err);
         }
     }
+    let schema = catalog.get_schema(table_id)?;
 
     // Inisialisasi file fisik .db khusus untuk tabel baru
     let table_file_path = Path::new(db_path).join(format!("{}.db", table_name));
@@ -31,7 +37,6 @@ pub(crate) fn apply_create_table(
     let mut buffer_pool_manager = BufferPoolManager::new(disk_manager, 10);
     let table_heap = TableHeap::new(&mut buffer_pool_manager)?;
 
-    let schema = catalog.get_schema(table_id)?;
     let mut auto_increment_counters = HashMap::new();
 
     // --- TAMBAHAN: Inisialisasi IndexRegistry dan daftarkan kolom unik ---

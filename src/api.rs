@@ -120,9 +120,11 @@ impl DBM {
         db_mut.add_columns(table_name, raw_columns)?;
         Ok(QueryResult::OK)
     }
-    pub fn api_column_drop(&mut self, table_name: &str, col_name: &str) -> DBMError {
+    pub fn api_column_drop(&mut self, table_name: &str, col_names: Vec<&str>) -> DBMError {
         let db_mut = self.dbm.active_database_mut()?;
-        db_mut.drop_column(table_name, col_name)?;
+        for name in col_names {
+            db_mut.drop_column(table_name, name)?;
+        }
         Ok(QueryResult::OK)
     }
     pub fn api_column_rename(

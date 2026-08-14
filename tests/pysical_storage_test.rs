@@ -1,97 +1,97 @@
 #[cfg(test)]
 mod tests {
 
-    use coredb::{
-        BinaryOp, ColumnConstraint, DBM, DataType, DomainError, Expr, Increment, SelectStmt,
-        ValueType, catalog::QueryResult,
-    };
+    use coredb::{DBM, DataType, DomainError};
 
+    #[allow(warnings)]
+    const USR_NAME: &str = "user_test";
+    #[allow(warnings)]
+    const PASSWD: &str = "user_passwd";
+    const DB_NAME: &str = "db_test";
+    const DB_RENAMED: &str = "db_renamed";
+    const TBL_NAME: &str = "table_test";
+
+    /// helper clear data
+    fn remove_data_file() -> Result<(), DomainError> {
+        let path = std::path::Path::new(".data");
+
+        if path.exists() {
+            std::fs::remove_dir_all(path)
+                .map_err(|e| DomainError::catalog(format!("gagal hapus file: {e}")))?;
+        }
+
+        Ok(())
+    }
+
+    // A. point test:
+    // 1 buat db baru.
+    // 2 buat db baru menggunakan nama yg sudah terdaftar.
+    // 3 ubah nama db
+    // 4 ubah nama db ke nama yg sudah terdaftar.
+    // 5 hapus database
     #[test]
-    fn test_persistent_file_layout() -> Result<(), DomainError> {
-        // 1. Inisialisasi DatabaseManager (secara otomatis membuat folder data/root)
+    fn test_persistent_database_actions() -> Result<(), DomainError> {
+        // hapus data lama jika ada.
+        remove_data_file()?;
+
         let mut dbm = DBM::new();
 
-        // // 3. Buat database baru bernama "test_db" di bawah user aktif ('root')
-        dbm.api_database_create("mydb")?;
-        dbm.api_database_use("mydb")?;
+        // 1. tes buat db baru
+        let res = dbm.api_database_create(DB_NAME);
+        debug_assert!(res.is_ok(), "create new db: harus sukses");
 
-        let raw_columns = vec![
-            (
-                "id".to_string(),
-                DataType::Int,
-                vec![
-                    ColumnConstraint::Auto(Increment::Enabled { start: 1, step: 1 }),
-                    ColumnConstraint::PrimaryKey,
-                ],
-            ),
-            (
-                "name".to_string(),
-                DataType::Text,
-                vec![ColumnConstraint::NotNull, ColumnConstraint::Unique],
-            ),
-            (
-                "status".to_string(),
-                DataType::Enum {
-                    name: "status".into(),
-                    variants: vec!["lulus".into(), "gagal".to_string()],
-                },
-                vec![ColumnConstraint::Default(ValueType::Enum {
-                    type_name: "status".into(),
-                    value: "gagal".into(),
-                })],
-            ),
-        ];
-        dbm.api_table_create("users", raw_columns).unwrap();
+        // 2. tes buat db baru menggunakan nama yg sudah terpakai.
+        let res = dbm.api_database_create(DB_NAME);
+        debug_assert!(res.is_err(), "create new db (duplicate name): harus error");
 
-        // 5. Panggil save_to_disk untuk menulis metadata.bin dan flush file .db
-        let raw_rows = vec![
-            vec![
-                ValueType::Null,
-                ValueType::Text("jono".into()),
-                ValueType::Null,
-            ],
-            vec![
-                ValueType::Null,
-                ValueType::Text("joni".into()),
-                ValueType::Null,
-            ],
-            vec![
-                ValueType::Null,
-                ValueType::Text("jani".into()),
-                ValueType::Enum {
-                    type_name: "status".into(),
-                    value: "lulus".into(),
-                },
-            ],
-        ];
-        dbm.api_row_insert("users", raw_rows).unwrap();
+        // 3. tes rename db
+        let res = dbm.api_database_rename(DB_NAME, DB_RENAMED);
+        debug_assert!(res.is_ok(), "rename db: harus sukses");
 
-        // 6. Verifikasi keberadaan seluruh file pada struktur layout persisten
-        let statements = SelectStmt {
-            projection: Vec::new(), // Kosong berarti SELECT * (semua kolom)
-            selection: Some(Expr::binary(
-                Expr::Column("status".into()),
-                BinaryOp::Eq,
-                Expr::Literal(ValueType::Enum {
-                    type_name: "status".into(),
-                    value: "lulus".into(),
-                }),
-            )),
-            group_by: Vec::new(),
-            aggregates: Vec::new(),
-            order_by: Vec::new(),
-            limit: None,
-            offset: 0,
-        };
+        // disini DB_NAME sudah tidak eksis.
+        // yg terdaftar sekarang adalah DB_RENAMED.
 
-        let result = dbm.api_select("users", statements).unwrap();
-        match result {
-            QueryResult::Dql { schema: s, rows: r } => {
-                println!("{:#?}", s);
-                println!("{:#?}", r);
-            }
-            _ => (),
-        }
+        // tes buat db baru
+        let res = dbm.api_database_create(DB_NAME);
+        debug_assert!(res.is_ok(), "create new db: harus sukses");
+
+        // 4. tes rename db ke nama yg sudah terdaftar (DB_RENAMED)
+        let res = dbm.api_database_rename(DB_NAME, DB_RENAMED);
+        debug_assert!(
+            res.is_err(),
+            "rename db ke nama yg sudah digunakan: harus error"
+        );
+
+        // disini DB_NAME masih eksis.
+        // karena proses rename harusnya gagal di proses.
+
+        // tes hapus db dengan yg eksis.
+        let res = dbm.api_database_drop(DB_RENAMED);
+        debug_assert!(res.is_ok(), "drop db: harus sukses");
+
+        Ok(())
+    }
+
+    // B. test point
+    #[test]
+    fn test_presisten_table_actions() -> Result<(), DomainError> {
+        remove_data_file()?;
+
+        let mut dbm = DBM::new();
+        // hapus data lama jika ada
+        dbm.api_database_create(DB_NAME)?;
+
+        let res = dbm.api_database_use(DB_NAME);
+        debug_assert!(res.is_ok(), "use database: harus sukses");
+
+        // buat table baru dengan kolom
+        let raw_columns = vec![("id".to_string(), DataType::Int, vec![])];
+        let res = dbm.api_table_create(TBL_NAME, raw_columns);
+        debug_assert!(res.is_ok(), " create new table: harus sukses");
+
+        // buat table kosong (tanpa kolom)
+        let res = dbm.api_table_create("table_kosong", vec![]);
+        debug_assert!(res.is_err(), "create table no column: harus error");
 
         Ok(())
     }
