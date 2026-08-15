@@ -10,6 +10,7 @@ mod tests {
     const DB_NAME: &str = "db_test";
     const DB_RENAMED: &str = "db_renamed";
     const TBL_NAME: &str = "table_test";
+    const TABLE_RENAMED: &str = "table_renamed";
 
     /// helper clear data
     fn remove_data_file() -> Result<(), DomainError> {
@@ -24,10 +25,10 @@ mod tests {
     }
 
     // A. point test:
-    // 1 buat db baru.
-    // 2 buat db baru menggunakan nama yg sudah terdaftar.
-    // 3 ubah nama db
-    // 4 ubah nama db ke nama yg sudah terdaftar.
+    // 1 buat db baru (uniq name).
+    // 2 buat db baru (non uniq name).
+    // 3 ubah nama db (uniq name)
+    // 4 ubah nama db ke nama yg sudah terdaftar (non uniq name).
     // 5 hapus database
     #[test]
     fn test_persistent_database_actions() -> Result<(), DomainError> {
@@ -63,7 +64,7 @@ mod tests {
         );
 
         // disini DB_NAME masih eksis.
-        // karena proses rename harusnya gagal di proses.
+        // karena proses rename harusnya gagal diproses.
 
         // tes hapus db dengan yg eksis.
         let res = dbm.api_database_drop(DB_RENAMED);
@@ -79,7 +80,8 @@ mod tests {
 
         let mut dbm = DBM::new();
         // hapus data lama jika ada
-        dbm.api_database_create(DB_NAME)?;
+        let res = dbm.api_database_create(DB_NAME);
+        debug_assert!(res.is_ok(), "creat db: harus ok");
 
         let res = dbm.api_database_use(DB_NAME);
         debug_assert!(res.is_ok(), "use database: harus sukses");
@@ -93,6 +95,28 @@ mod tests {
         let res = dbm.api_table_create("table_kosong", vec![]);
         debug_assert!(res.is_err(), "create table no column: harus error");
 
+        // rename table
+        let res = dbm.api_table_rename(TBL_NAME, TABLE_RENAMED);
+        debug_assert!(res.is_ok(), "table rename: harus sukses");
+
+        // disini TBL_NAME sudah tidak eksis.
+        // yg terdaftar sekarang adalah TBL_RENAMED.
+
+        // buat table baru dengan kolom
+        let raw_columns = vec![("id".to_string(), DataType::Int, vec![])];
+        let res = dbm.api_table_create(TBL_NAME, raw_columns);
+        debug_assert!(res.is_ok(), " create new table 2: harus sukses");
+
+        // ganti nama tabel menggunakan nama yg sudah ferdaftar.
+        let res = dbm.api_database_rename(TBL_NAME, TABLE_RENAMED);
+        debug_assert!(res.is_err(), "table rename (duplicate name): harus error");
+
+        // disini TBL_NAME masih eksis.
+        // karena proses rename harusnya gagal diproses.
+
+        // hapus table
+        let res = dbm.api_table_drop(TABLE_RENAMED);
+        debug_assert!(res.is_ok(), "drop table eksis: harus sukses");
         Ok(())
     }
 }
