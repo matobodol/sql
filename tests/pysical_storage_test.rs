@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod tests {
-
-    use coredb::{DBM, DataType, DomainError};
+    use sql::{DBM, DataType, DomainError, api_command::CMD};
 
     #[allow(warnings)]
     const USR_NAME: &str = "user_test";
@@ -10,7 +9,7 @@ mod tests {
     const DB_NAME: &str = "db_test";
     const DB_RENAMED: &str = "db_renamed";
     const TBL_NAME: &str = "table_test";
-    const TABLE_RENAMED: &str = "table_renamed";
+    const TBL_RENAMED: &str = "table_renamed";
 
     /// helper clear data
     fn remove_data_file() -> Result<(), DomainError> {
@@ -38,26 +37,38 @@ mod tests {
         let mut dbm = DBM::new();
 
         // 1. tes buat db baru
-        let res = dbm.api_database_create(DB_NAME);
+        let res = dbm.execute(vec![CMD::CreateDatabase {
+            db_name: DB_NAME.into(),
+        }]);
         debug_assert!(res.is_ok(), "create new db: harus sukses");
 
         // 2. tes buat db baru menggunakan nama yg sudah terpakai.
-        let res = dbm.api_database_create(DB_NAME);
+        let res = dbm.execute(vec![CMD::CreateDatabase {
+            db_name: DB_NAME.to_string(),
+        }]);
         debug_assert!(res.is_err(), "create new db (duplicate name): harus error");
 
         // 3. tes rename db
-        let res = dbm.api_database_rename(DB_NAME, DB_RENAMED);
+        let res = dbm.execute(vec![CMD::RenamDatabase {
+            old_name: DB_NAME.to_string(),
+            new_name: DB_RENAMED.to_string(),
+        }]);
         debug_assert!(res.is_ok(), "rename db: harus sukses");
 
         // disini DB_NAME sudah tidak eksis.
         // yg terdaftar sekarang adalah DB_RENAMED.
 
         // tes buat db baru
-        let res = dbm.api_database_create(DB_NAME);
+        let res = dbm.execute(vec![CMD::CreateDatabase {
+            db_name: DB_NAME.to_string(),
+        }]);
         debug_assert!(res.is_ok(), "create new db: harus sukses");
 
         // 4. tes rename db ke nama yg sudah terdaftar (DB_RENAMED)
-        let res = dbm.api_database_rename(DB_NAME, DB_RENAMED);
+        let res = dbm.execute(vec![CMD::RenamDatabase {
+            old_name: DB_NAME.to_string(),
+            new_name: DB_RENAMED.to_string(),
+        }]);
         debug_assert!(
             res.is_err(),
             "rename db ke nama yg sudah digunakan: harus error"
@@ -67,7 +78,9 @@ mod tests {
         // karena proses rename sebelumnya gagal diproses.
 
         // tes hapus db dengan yg eksis.
-        let res = dbm.api_database_drop(DB_NAME);
+        let res = dbm.execute(vec![CMD::DropDatabase {
+            db_name: DB_NAME.to_string(),
+        }]);
         debug_assert!(res.is_ok(), "drop db: harus sukses");
 
         Ok(())
@@ -80,23 +93,36 @@ mod tests {
 
         let mut dbm = DBM::new();
         // hapus data lama jika ada
-        let res = dbm.api_database_create(DB_NAME);
+        let res = dbm.execute(vec![CMD::CreateDatabase {
+            db_name: DB_NAME.to_string(),
+        }]);
         debug_assert!(res.is_ok(), "creat db: harus ok");
 
-        let res = dbm.api_database_use(DB_NAME);
+        let res = dbm.execute(vec![CMD::UseDatabase {
+            db_name: DB_NAME.to_string(),
+        }]);
         debug_assert!(res.is_ok(), "use database: harus sukses");
 
         // buat table baru dengan kolom
         let raw_columns = vec![("id".to_string(), DataType::Int, vec![])];
-        let res = dbm.api_table_create(TBL_NAME, raw_columns);
+        let res = dbm.execute(vec![CMD::CreateTable {
+            table_name: TBL_NAME.to_string(),
+            raw_columns,
+        }]);
         debug_assert!(res.is_ok(), " create new table: harus sukses");
 
         // buat table kosong (tanpa kolom)
-        let res = dbm.api_table_create("table_kosong", vec![]);
+        let res = dbm.execute(vec![CMD::CreateTable {
+            table_name: "table kosong".to_string(),
+            raw_columns: vec![],
+        }]);
         debug_assert!(res.is_err(), "create table no column: harus error");
 
         // rename table
-        let res = dbm.api_table_rename(TBL_NAME, TABLE_RENAMED);
+        let res = dbm.execute(vec![CMD::RenameTable {
+            old_name: TBL_NAME.to_string(),
+            new_name: TBL_RENAMED.to_string(),
+        }]);
         debug_assert!(res.is_ok(), "table rename: harus sukses");
 
         // disini TBL_NAME sudah tidak eksis.
@@ -104,18 +130,26 @@ mod tests {
 
         // buat table baru dengan kolom
         let raw_columns = vec![("id".to_string(), DataType::Int, vec![])];
-        let res = dbm.api_table_create(TBL_NAME, raw_columns);
+        let res = dbm.execute(vec![CMD::CreateTable {
+            table_name: TBL_NAME.to_string(),
+            raw_columns,
+        }]);
         debug_assert!(res.is_ok(), " create new table 2: harus sukses");
 
         // ganti nama tabel menggunakan nama yg sudah ferdaftar.
-        let res = dbm.api_database_rename(TBL_NAME, TABLE_RENAMED);
+        let res = dbm.execute(vec![CMD::RenameTable {
+            old_name: TBL_NAME.to_string(),
+            new_name: TBL_RENAMED.to_string(),
+        }]);
         debug_assert!(res.is_err(), "table rename (duplicate name): harus error");
 
         // disini TBL_NAME masih eksis.
         // karena proses rename sebelumnya gagal diproses.
 
         // hapus table
-        let res = dbm.api_table_drop(TBL_NAME);
+        let res = dbm.execute(vec![CMD::DropTable {
+            table_name: TBL_NAME.to_string(),
+        }]);
         debug_assert!(res.is_ok(), "drop table eksis: harus sukses");
 
         Ok(())

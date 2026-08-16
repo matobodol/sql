@@ -14,13 +14,14 @@ pub mod validator;
 
 pub(crate) use catalog::{
     Database, DatabaseManager,
-    id::{ColumnId, RowId, TableId},
+    id::{RowId, TableId},
 };
 pub(crate) use schema::{Column, Schema};
 pub(crate) use table_store::{Row, TableContext};
 pub(crate) use types::Bool3VL;
 
 // Re-exports untuk publik
+pub use catalog::id::ColumnId;
 pub use error::DomainError;
 pub use execution::{AggregateFunc, OrderByExpr, SortOrder, Statement};
 pub use expression::{BinaryOp, Expr};
@@ -28,3 +29,4 @@ pub use schema::{ColumnConstraint, ColumnPosition, Increment, TableConstraint};
 pub use types::{DataType, ValueType};
 
 pub use api::DBM;
+pub use api_command::CMD;

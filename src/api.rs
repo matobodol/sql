@@ -38,8 +38,10 @@ impl DBM {
     ///
     /// # Example
     /// ```rust
+    /// use sql::{DBM, CMD};
+    ///
     /// let mut db = DBM::new();
-    /// db.execute(vec![CMD::CreateDatabase("my_db".to_string())]);
+    /// db.execute(vec![CMD::CreateDatabase{db_name: "mydb".to_string()}]);
     /// ```
     pub fn execute(&mut self, cmd: Vec<CMD>) -> DBMError {
         execute(self, cmd)

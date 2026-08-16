@@ -29,7 +29,7 @@ pub enum CMD {
     ShowUsers,
 
     // --- DATABASE ---
-    CreateDatabasea {
+    CreateDatabase {
         db_name: String,
     },
     RenamDatabase {
@@ -135,7 +135,7 @@ pub(crate) fn execute(dbm: &mut DBM, commands: Vec<CMD>) -> Result<QueryResult, 
             // database
             CMD::ShowDatabases => dbm.api_databases_show(),
             CMD::UseDatabase { db_name } => dbm.api_database_use(&db_name),
-            CMD::CreateDatabasea { db_name } => dbm.api_database_create(&db_name),
+            CMD::CreateDatabase { db_name } => dbm.api_database_create(&db_name),
             CMD::DropDatabase { db_name } => dbm.api_database_drop(&db_name),
             CMD::RenamDatabase { old_name, new_name } => {
                 dbm.api_database_rename(&old_name, &new_name)

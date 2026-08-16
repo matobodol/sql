@@ -15,7 +15,7 @@ use crate::{
 ///
 /// # Contoh Penggunaan Field `Statement`
 /// ```rust
-/// use crate::{Statement, Expr, ColumnId, AggregateFunc, OrderByExpr, SortOrder};
+/// use sql::{Statement, BinaryOp, Expr, ColumnId, AggregateFunc, OrderByExpr, SortOrder};
 ///
 /// let stmt = Statement {
 ///     // 1. projection (SELECT list): Kolom atau ekspresi yang ingin ditampilkan
@@ -26,13 +26,13 @@ use crate::{
 ///     // Contoh SQL: WHERE age > 18
 ///     selection: Some(Expr::binary(
 ///         Expr::col("age".to_string()),
-///         crate::BinaryOp::Gt,
+///         BinaryOp::Gt,
 ///         Expr::lit(18),
 ///     )),
 ///
 ///     // 3. group_by (GROUP BY clause): ID kolom untuk pengelompokan data
 ///     // Contoh SQL: GROUP BY department_id
-///     group_by: vec![ColumnId(1)],
+///      group_by: vec![ColumnId(1)],
 ///
 ///     // 4. aggregates (Aggregate functions): Fungsi agregasi seperti COUNT, SUM, AVG, MIN, MAX
 ///     // Contoh SQL: SELECT COUNT(*)
