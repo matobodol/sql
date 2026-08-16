@@ -10,18 +10,25 @@ use crate::{
     DomainError, Expr, Row, Schema, ValueType, disk::BufferPoolManager, expression::eval_expr,
 };
 
+/// Menentukan arah pengurutan data (`ASC` atau `DESC`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SortOrder {
+    /// Pengurutan secara menaik (Ascending)
     Ascending,
+    /// Pengurutan secara menurun (Descending)
     Descending,
 }
 
+/// Merepresentasikan ekspresi pengurutan beserta arahnya dalam klausa ORDER BY.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OrderByExpr {
+    /// Ekspresi atau kolom yang menjadi acuan pengurutan
     pub expr: Expr,
+    /// Arah urutan (Ascending atau Descending)
     pub order: SortOrder,
 }
 
+/// Operator fisik untuk melakukan pengurutan baris data dari operator anak.
 pub struct SortOperator {
     input: Box<dyn PhysicalOperator>,
     order_by: Vec<OrderByExpr>,

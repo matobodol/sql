@@ -119,7 +119,7 @@ pub enum CMD {
     },
 }
 
-pub fn execute(dbm: &mut DBM, commands: Vec<CMD>) -> Result<QueryResult, DomainError> {
+pub(crate) fn execute(dbm: &mut DBM, commands: Vec<CMD>) -> Result<QueryResult, DomainError> {
     for cmd in commands {
         let result = match cmd {
             // user

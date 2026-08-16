@@ -7,21 +7,33 @@ use crate::disk::BufferPoolManager;
 use crate::execution::operator::PhysicalOperator;
 use crate::{ColumnId, DomainError, Row, RowId, Schema, ValueType};
 
+/// Menentukan jenis fungsi agregasi SQL yang didukung oleh sistem (COUNT, SUM, AVG, MIN, MAX).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AggregateFunc {
+    /// Menghitung jumlah baris, dapat berupa `COUNT(*)` (tanpa parameter kolom) atau `COUNT(column)`.
     Count(Option<ColumnId>),
+    /// Menjumlahkan nilai dalam kolom tertentu (`SUM(column)`).
     Sum(ColumnId),
+    /// Menghitung nilai rata-rata dari kolom tertentu (`AVG(column)`).
     Avg(ColumnId),
+    /// Mencari nilai minimum dari kolom tertentu (`MIN(column)`).
     Min(ColumnId),
+    /// Mencari nilai maksimum dari kolom tertentu (`MAX(column)`).
     Max(ColumnId),
 }
 
+/// Akumulator internal untuk melacak state perhitungan fungsi agregasi selama proses grouping.
 #[derive(Debug, Clone)]
 pub enum Accumulator {
+    /// Akumulator untuk fungsi COUNT
     Count(i64),
+    /// Akumulator untuk fungsi SUM
     Sum(ValueType),
+    /// Akumulator untuk fungsi AVG (menyimpan total penjumlahan dan jumlah baris)
     Avg { sum: ValueType, count: i64 },
+    /// Akumulator untuk fungsi MIN
     Min(Option<ValueType>),
+    /// Akumulator untuk fungsi MAX
     Max(Option<ValueType>),
 }
 

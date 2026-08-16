@@ -12,16 +12,19 @@ pub mod table_store;
 pub mod types;
 pub mod validator;
 
-// Re-exports untuk publik
-pub use catalog::{
+pub(crate) use catalog::{
     Database, DatabaseManager,
     id::{ColumnId, RowId, TableId},
 };
+pub(crate) use schema::{Column, Schema};
+pub(crate) use table_store::{Row, TableContext};
+pub(crate) use types::Bool3VL;
+
+// Re-exports untuk publik
 pub use error::DomainError;
 pub use execution::{AggregateFunc, OrderByExpr, SortOrder, Statement};
 pub use expression::{BinaryOp, Expr};
-pub use schema::{Column, ColumnConstraint, ColumnPosition, Increment, Schema, TableConstraint};
-pub use table_store::{Row, TableContext};
-pub use types::{Bool3VL, DataType, ValueType};
+pub use schema::{ColumnConstraint, ColumnPosition, Increment, TableConstraint};
+pub use types::{DataType, ValueType};
 
 pub use api::DBM;

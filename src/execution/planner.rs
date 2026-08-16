@@ -10,14 +10,71 @@ use crate::{
     AggregateFunc, Column, ColumnId, DataType, DomainError, Expr, OrderByExpr, Schema, ValueType,
 };
 
+/// Merepresentasikan struktur pernyataan query terstruktur (AST / Logical Statement)
+/// yang mencakup komponen SELECT, WHERE, GROUP BY, ORDER BY, hingga LIMIT/OFFSET.
+///
+/// # Contoh Penggunaan Field `Statement`
+/// ```rust
+/// use crate::{Statement, Expr, ColumnId, AggregateFunc, OrderByExpr, SortOrder};
+///
+/// let stmt = Statement {
+///     // 1. projection (SELECT list): Kolom atau ekspresi yang ingin ditampilkan
+///     // Contoh SQL: SELECT name, age FROM users
+///     projection: vec![Expr::col("name".to_string()), Expr::col("age".to_string())],
+///
+///     // 2. selection (WHERE clause): Kondisi filter baris data
+///     // Contoh SQL: WHERE age > 18
+///     selection: Some(Expr::binary(
+///         Expr::col("age".to_string()),
+///         crate::BinaryOp::Gt,
+///         Expr::lit(18),
+///     )),
+///
+///     // 3. group_by (GROUP BY clause): ID kolom untuk pengelompokan data
+///     // Contoh SQL: GROUP BY department_id
+///     group_by: vec![ColumnId(1)],
+///
+///     // 4. aggregates (Aggregate functions): Fungsi agregasi seperti COUNT, SUM, AVG, MIN, MAX
+///     // Contoh SQL: SELECT COUNT(*)
+///     aggregates: vec![AggregateFunc::Count(None)],
+///
+///     // 5. order_by (ORDER BY clause): Pengaturan pengurutan baris hasil query
+///     // Contoh SQL: ORDER BY age DESC
+///     order_by: vec![OrderByExpr {
+///         expr: Expr::col("age".to_string()),
+///         order: SortOrder::Descending,
+///     }],
+///
+///     // 6. limit (LIMIT clause): Batas maksimum jumlah baris yang dikembalikan
+///     // Contoh SQL: LIMIT 10
+///     limit: Some(10),
+///
+///     // 7. offset (OFFSET clause): Jumlah baris awal yang dilewati
+///     // Contoh SQL: OFFSET 5
+///     offset: 5,
+/// };
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct Statement {
+    /// Daftar ekspresi kolom atau operasi yang akan diproyeksikan (klausa SELECT).
     pub projection: Vec<Expr>,
+
+    /// Kondisi penyaringan baris data (klausa WHERE).
     pub selection: Option<Expr>,
+
+    /// Daftar ID kolom yang digunakan untuk pengelompokan data (klausa GROUP BY).
     pub group_by: Vec<ColumnId>,
+
+    /// Daftar fungsi agregasi yang diterapkan (misalnya SUM, COUNT, AVG, MIN, MAX).
     pub aggregates: Vec<AggregateFunc>,
+
+    /// Pengaturan pengurutan baris hasil query (klausa ORDER BY).
     pub order_by: Vec<OrderByExpr>,
+
+    /// Batas jumlah maksimum baris yang dikembalikan (klausa LIMIT).
     pub limit: Option<usize>,
+
+    /// Jumlah baris awal yang dilewati sebelum mulai mengembalikan hasil (klausa OFFSET).
     pub offset: usize,
 }
 
@@ -25,7 +82,7 @@ pub struct PhysicalPlanner;
 
 impl PhysicalPlanner {
     pub fn build_plan(
-        table_heap: &TableHeap, // Tetap menggunakan referensi biasa &TableHeap
+        table_heap: &TableHeap,
         bpm: &mut BufferPoolManager,
         schema: &Schema,
         stmt: &Statement,
