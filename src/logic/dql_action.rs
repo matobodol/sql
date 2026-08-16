@@ -1,14 +1,14 @@
-use crate::catalog::{CatalogStore, QueryResult};
+use crate::catalog::{Metadata, QueryResult};
 use crate::disk::{BufferPoolManager, TableHeap};
 use crate::execution::PhysicalPlanner;
-use crate::{DomainError, Schema, SelectStmt, TableId};
+use crate::{DomainError, Schema, Statement, TableId};
 
 pub(crate) fn execute_select(
-    catalog: &CatalogStore,
+    catalog: &Metadata,
     table_heap: &TableHeap,
     bpm: &mut BufferPoolManager,
     table_id: TableId,
-    stmt: SelectStmt,
+    stmt: Statement,
 ) -> Result<QueryResult, DomainError> {
     let schema_cols = catalog.get_schema_columns(table_id)?;
     let schema = Schema::new(schema_cols.to_vec())?;

@@ -205,7 +205,7 @@ pub(crate) fn execute_dml_action(
                 table_heap,
                 bpm,
                 index_registry,
-                auto_increment_counters, // <-- Teruskan ke handle_insert
+                auto_increment_counters,
                 table_id,
                 rows,
             )?;

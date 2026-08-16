@@ -1,5 +1,5 @@
 [package]
-name = "coredb"
+name = "sql"
 edition = "2024"
 version = "0.1.0"
 
@@ -15,5 +15,3 @@ thiserror = "1.0"
 tempfile = "3.8"
 
 parking_lot = "0.12"
-
-

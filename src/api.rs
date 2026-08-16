@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    ColumnConstraint, ColumnPosition, DataType, DatabaseManager, DomainError, Expr, SelectStmt,
+    ColumnConstraint, ColumnPosition, DataType, DatabaseManager, DomainError, Expr, Statement,
     ValueType, catalog::QueryResult, logic::table_action::virtual_column,
 };
 
@@ -34,8 +34,8 @@ impl DBM {
         self.dbm.drop_database(db_name)?;
         Ok(QueryResult::OK)
     }
-    pub fn api_databases_show(dbm: &DatabaseManager) -> DBMError {
-        let (schema, rows) = virtual_column(dbm.list_databases())?;
+    pub fn api_databases_show(&self) -> DBMError {
+        let (schema, rows) = virtual_column(self.dbm.list_databases())?;
         Ok(QueryResult::Dql { schema, rows })
     }
     pub fn api_database_use(&mut self, db_name: &str) -> DBMError {
@@ -44,41 +44,33 @@ impl DBM {
     }
 
     // -- USER
-    pub fn api_user_create(
-        dbm: &mut DatabaseManager,
-        username: &str,
-        password_hash: &str,
-    ) -> DBMError {
-        dbm.create_user(username, password_hash)?;
+    pub fn api_user_create(&mut self, username: &str, password_hash: &str) -> DBMError {
+        self.dbm.create_user(username, password_hash)?;
         Ok(QueryResult::OK)
     }
-    pub fn api_user_login(
-        dbm: &mut DatabaseManager,
-        username: &str,
-        password_hash: &str,
-    ) -> DBMError {
-        dbm.login(username, password_hash)?;
+    pub fn api_user_login(&mut self, username: &str, password_hash: &str) -> DBMError {
+        self.dbm.login(username, password_hash)?;
         Ok(QueryResult::OK)
     }
     pub fn api_user_change_password(
-        dbm: &mut DatabaseManager,
-        old_password: Option<&str>,
+        &mut self,
+        old_password: Option<String>,
         new_password: &str,
     ) -> DBMError {
-        dbm.change_password(old_password, new_password)?;
+        self.dbm.change_password(old_password, new_password)?;
         Ok(QueryResult::OK)
     }
-    pub fn api_user_rename(
-        dbm: &mut DatabaseManager,
-        old_username: &str,
-        new_username: &str,
-    ) -> DBMError {
-        dbm.rename_user(old_username, new_username)?;
+    pub fn api_user_rename(&mut self, old_username: &str, new_username: &str) -> DBMError {
+        self.dbm.rename_user(old_username, new_username)?;
         Ok(QueryResult::OK)
     }
-    pub fn api_user_drop(dbm: &mut DatabaseManager, username: &str) -> DBMError {
-        dbm.drop_user(username)?;
+    pub fn api_user_drop(&mut self, username: &str) -> DBMError {
+        self.dbm.drop_user(username)?;
         Ok(QueryResult::OK)
+    }
+    pub fn api_user_show(&self) -> DBMError {
+        let (schema, rows) = virtual_column(self.dbm.show_users())?;
+        Ok(QueryResult::Dql { schema, rows })
     }
 
     // -- TABLE
@@ -101,12 +93,12 @@ impl DBM {
         db_mut.drop_table(table_name)?;
         Ok(QueryResult::OK)
     }
-    pub fn api_table_show(dbm: &DatabaseManager) -> DBMError {
-        let (schema, rows) = dbm.active_database_ref()?.show_tables()?;
+    pub fn api_table_show(&self) -> DBMError {
+        let (schema, rows) = self.dbm.active_database_ref()?.show_tables()?;
         Ok(QueryResult::Dql { schema, rows })
     }
-    pub fn api_table_describe(dbm: &DatabaseManager, table_name: &str) -> DBMError {
-        let db_ref = dbm.active_database_ref()?;
+    pub fn api_table_describe(&self, table_name: &str) -> DBMError {
+        let db_ref = self.dbm.active_database_ref()?;
         db_ref.describe_table(table_name)
     }
 
@@ -120,11 +112,9 @@ impl DBM {
         db_mut.add_columns(table_name, raw_columns)?;
         Ok(QueryResult::OK)
     }
-    pub fn api_column_drop(&mut self, table_name: &str, col_names: Vec<&str>) -> DBMError {
+    pub fn api_column_drop(&mut self, table_name: &str, col_name: &str) -> DBMError {
         let db_mut = self.dbm.active_database_mut()?;
-        for name in col_names {
-            db_mut.drop_column(table_name, name)?;
-        }
+        db_mut.drop_column(table_name, col_name)?;
         Ok(QueryResult::OK)
     }
     pub fn api_column_rename(
@@ -198,7 +188,7 @@ impl DBM {
     }
 
     // -- DQL
-    pub fn api_select(&mut self, table_name: &str, statements: SelectStmt) -> DBMError {
+    pub fn api_select(&mut self, table_name: &str, statements: Statement) -> DBMError {
         let db_mut = self.dbm.active_database_mut()?;
         db_mut.select(table_name, statements)
     }

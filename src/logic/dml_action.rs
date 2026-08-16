@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::catalog::CatalogStore;
+use crate::catalog::Metadata;
 use crate::disk::{BufferPoolManager, RID, TableHeap};
 use crate::expression::{eval_expr, eval_where};
 use crate::index::{Index, IndexRegistry};
@@ -17,7 +17,7 @@ struct StagedUpdate {
 }
 
 pub(crate) fn handle_insert(
-    catalog: &CatalogStore,
+    catalog: &Metadata,
     table_heap: &mut TableHeap,
     bpm: &mut BufferPoolManager,
     index_registry: &mut IndexRegistry,
@@ -118,7 +118,7 @@ pub(crate) fn handle_insert(
 }
 
 pub(crate) fn handle_delete(
-    catalog: &CatalogStore,
+    catalog: &Metadata,
     table_heap: &mut TableHeap,
     bpm: &mut BufferPoolManager,
     index_registry: &mut IndexRegistry,
@@ -211,7 +211,7 @@ pub(crate) fn handle_delete(
 }
 
 pub(crate) fn handle_update(
-    catalog: &CatalogStore,
+    catalog: &Metadata,
     table_heap: &mut TableHeap,
     bpm: &mut BufferPoolManager,
     index_registry: &mut IndexRegistry,

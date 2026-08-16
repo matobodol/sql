@@ -64,10 +64,10 @@ mod tests {
         );
 
         // disini DB_NAME masih eksis.
-        // karena proses rename harusnya gagal diproses.
+        // karena proses rename sebelumnya gagal diproses.
 
         // tes hapus db dengan yg eksis.
-        let res = dbm.api_database_drop(DB_RENAMED);
+        let res = dbm.api_database_drop(DB_NAME);
         debug_assert!(res.is_ok(), "drop db: harus sukses");
 
         Ok(())
@@ -112,11 +112,12 @@ mod tests {
         debug_assert!(res.is_err(), "table rename (duplicate name): harus error");
 
         // disini TBL_NAME masih eksis.
-        // karena proses rename harusnya gagal diproses.
+        // karena proses rename sebelumnya gagal diproses.
 
         // hapus table
-        let res = dbm.api_table_drop(TABLE_RENAMED);
+        let res = dbm.api_table_drop(TBL_NAME);
         debug_assert!(res.is_ok(), "drop table eksis: harus sukses");
+
         Ok(())
     }
 }

@@ -199,7 +199,7 @@ impl UserManager {
     pub fn change_password(
         &mut self,
         username: &str,
-        old_password_hash: Option<&str>,
+        old_password_hash: Option<String>,
         new_password_hash: &str,
     ) -> Result<(), DomainError> {
         let user = self
@@ -217,5 +217,9 @@ impl UserManager {
         } else {
             Err(DomainError::UserPasswordInvalid(username.into()))
         }
+    }
+
+    pub fn list_userz(&self) -> Vec<String> {
+        self.users.keys().map(|n| n.clone()).collect()
     }
 }

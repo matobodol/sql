@@ -11,7 +11,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct SelectStmt {
+pub struct Statement {
     pub projection: Vec<Expr>,
     pub selection: Option<Expr>,
     pub group_by: Vec<ColumnId>,
@@ -28,7 +28,7 @@ impl PhysicalPlanner {
         table_heap: &TableHeap, // Tetap menggunakan referensi biasa &TableHeap
         bpm: &mut BufferPoolManager,
         schema: &Schema,
-        stmt: &SelectStmt,
+        stmt: &Statement,
     ) -> Result<Box<dyn PhysicalOperator>, DomainError> {
         // ------------------------------------------------------------------
         // LANGKAH 1: Inisialisasi Root Scan Operator (IndexScan vs SeqScan)

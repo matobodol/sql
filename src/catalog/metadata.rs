@@ -16,7 +16,7 @@ pub const EXT_INDEX_REGISTRY: &str = ".index";
 pub const METADATA: &str = "METADATA.bin";
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub struct CatalogStore {
+pub struct Metadata {
     id_generator: IdGenerator,
 
     // -- TABLE META --
@@ -29,7 +29,7 @@ pub struct CatalogStore {
     column_to_name: HashMap<(TableId, ColumnId), String>,
 }
 
-impl CatalogStore {
+impl Metadata {
     pub fn new() -> Self {
         Self::default()
     }

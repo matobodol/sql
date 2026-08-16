@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::Path};
 use crate::{
     Database, DomainError,
     catalog::{BASE_PATH, GLOBAL_USER_PATH, UserManager},
-    storage::storage::DiskStorage,
+    table_store::storage::DiskStorage,
 };
 
 type UserName = String;
@@ -310,7 +310,7 @@ impl DatabaseManager {
 
     pub fn change_password(
         &mut self,
-        old_password: Option<&str>,
+        old_password: Option<String>,
         new_password: &str,
     ) -> Result<(), DomainError> {
         let username = self.current_username()?.to_string();
@@ -338,16 +338,8 @@ impl DatabaseManager {
         self.user_manager.drop_user(username)?;
         self.save_users()
     }
-}
 
-// impl DatabaseManager {
-//     // ==========================================
-//     // EXECUTION FACADE
-//     // ==========================================
-//
-//     pub fn execute(&mut self, action: CommandAction) -> Result<QueryResult, DomainError> {
-//         // Ambil referensi mutabel ke database aktif, lalu delegasikan eksekusi perintah ke `Database`
-//         let db = self.active_database_mut()?;
-//         db.execute(action)
-//     }
-// }
+    pub fn show_users(&self) -> Vec<String> {
+        self.user_manager.list_userz()
+    }
+}

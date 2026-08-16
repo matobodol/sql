@@ -11,11 +11,11 @@ use crate::logic::{
     apply_drop_constraint, apply_drop_table, apply_modify_column_type, apply_rename_column,
     apply_rename_table, apply_set_default, handle_delete, handle_insert, handle_update,
 };
-use crate::storage::DiskStorage;
-use crate::{ColumnConstraint, DataType, Expr, Row, Schema, SelectStmt, TableContext, ValueType};
+use crate::table_store::DiskStorage;
+use crate::{ColumnConstraint, DataType, Expr, Row, Schema, Statement, TableContext, ValueType};
 use crate::{
     DomainError, TableId,
-    catalog::CatalogStore,
+    catalog::Metadata,
     logic::{execute_describe_table, execute_select},
 };
 
@@ -30,7 +30,7 @@ pub enum QueryResult {
 
 #[derive(Debug)]
 pub struct Database {
-    catalog: CatalogStore,
+    catalog: Metadata,
     // Memetakan TableId ke konteks tabel (menyimpan data di file .db terpisah)
     tables: HashMap<TableId, TableContext>,
     db_path: String,
@@ -50,7 +50,7 @@ impl Database {
         let _ = std::fs::create_dir_all(&db_path);
 
         Self {
-            catalog: CatalogStore::new(),
+            catalog: Metadata::new(),
             tables: HashMap::new(),
             db_path,
         }
@@ -95,7 +95,7 @@ impl Database {
 
         // 1. Load metadata katalog (`metadata.bin`)
         let metadata_path = path.join(METADATA);
-        let catalog: CatalogStore = DiskStorage::load_from_file(&metadata_path)?;
+        let catalog: Metadata = DiskStorage::load_from_file(&metadata_path)?;
 
         let mut tables = HashMap::new();
 
@@ -161,12 +161,12 @@ impl Database {
     // ==========================================
 
     /// Mengambil referensi ke katalog metadata.
-    pub fn catalog(&self) -> &CatalogStore {
+    pub fn catalog(&self) -> &Metadata {
         &self.catalog
     }
 
     /// Mengambil referensi mutabel ke katalog metadata.
-    pub fn catalog_mut(&mut self) -> &mut CatalogStore {
+    pub fn catalog_mut(&mut self) -> &mut Metadata {
         &mut self.catalog
     }
 
@@ -405,7 +405,7 @@ impl Database {
     pub fn select(
         &mut self,
         table_name: &str,
-        statements: SelectStmt,
+        statements: Statement,
     ) -> Result<QueryResult, DomainError> {
         let table_id = self.catalog.get_table_id(&table_name)?;
 
@@ -423,80 +423,4 @@ impl Database {
             statements,
         )
     }
-    // /// Pintu masuk utama (facade method) untuk mengeksekusi berbagai macam `CommandAction`.
-    // pub fn execute(&mut self, action: CommandAction) -> Result<QueryResult, DomainError> {
-    //     match action {
-    //         CommandAction::ShowTables => {
-    //             let table_names = self.catalog.list_tables();
-    //             let (schema, rows) = virtual_column(table_names)?;
-    //             Ok(QueryResult::Dql { schema, rows })
-    //         }
-    //
-    //         CommandAction::DescribeTable { table_name } => {
-    //             let table_id = self.catalog.get_table_id(&table_name)?;
-    //             let schema = self.catalog.get_schema(table_id)?;
-    //             execute_describe_table(schema.columns())
-    //         }
-    //
-    //         CommandAction::TableAction { actions } => {
-    //             // Pastikan fungsi execute_table_action menerima parameter base_path jika diperlukan
-    //             execute_table_action(&mut self.catalog, &mut self.tables, &self.db_path, actions)?;
-    //
-    //             self.save_to_disk()?;
-    //             Ok(QueryResult::OK)
-    //         }
-    //
-    //         CommandAction::AlterTable {
-    //             table_name,
-    //             actions,
-    //         } => {
-    //             execute_alter_table(&mut self.catalog, &mut self.tables, &table_name, actions)?;
-    //
-    //             self.save_to_disk()?;
-    //             Ok(QueryResult::OK)
-    //         }
-    //
-    //         CommandAction::DmlAction { table_name, action } => {
-    //             let table_id = self.catalog.get_table_id(&table_name)?;
-    //             let context = self
-    //                 .tables
-    //                 .get_mut(&table_id)
-    //                 .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name.clone())))?;
-    //
-    //             let result = execute_dml_action(
-    //                 &self.catalog,
-    //                 &mut context.table_heap,
-    //                 &mut context.buffer_pool_manager,
-    //                 &mut context.index_registry,
-    //                 &mut context.auto_increment_counters, // <-- Tambahkan parameter ini ke execute_dml_action
-    //                 table_id,
-    //                 action,
-    //             )?;
-    //
-    //             self.save_to_disk()?;
-    //             Ok(result)
-    //         }
-    //
-    //         CommandAction::Select {
-    //             table_name,
-    //             statements,
-    //         } => {
-    //             let table_id = self.catalog.get_table_id(&table_name)?;
-    //
-    //             // Ubah .get() menjadi .get_mut() agar buffer_pool_manager bisa dipinjam secara mutabel
-    //             let table_context = self
-    //                 .tables
-    //                 .get_mut(&table_id)
-    //                 .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name.clone())))?;
-    //
-    //             execute_select(
-    //                 &self.catalog,
-    //                 &table_context.table_heap,
-    //                 &mut table_context.buffer_pool_manager, // Sisipkan BufferPoolManager di argumen ke-3
-    //                 table_id,
-    //                 statements,
-    //             )
-    //         }
-    //     }
-    // }
 }

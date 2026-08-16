@@ -3,14 +3,14 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 use crate::{
     Column, ColumnConstraint, ColumnId, DataType, DomainError, Row, RowId, Schema, TableContext,
     TableId, ValueType,
-    catalog::{CatalogStore, QueryResult},
+    catalog::{Metadata, QueryResult},
     disk::{BufferPoolManager, DiskManager, TableHeap},
     index::IndexRegistry,
 };
 
 // --- TABLE ACTION
 pub(crate) fn apply_create_table(
-    catalog: &mut CatalogStore,
+    catalog: &mut Metadata,
     tables: &mut HashMap<TableId, TableContext>,
     db_path: &str,
     table_name: &str,
@@ -75,7 +75,7 @@ pub(crate) fn apply_create_table(
 }
 
 pub(crate) fn apply_drop_table(
-    catalog: &mut CatalogStore,
+    catalog: &mut Metadata,
     tables: &mut HashMap<TableId, TableContext>,
     db_path: &str,
     table_name: &str,
@@ -94,7 +94,7 @@ pub(crate) fn apply_drop_table(
 }
 
 pub(crate) fn apply_rename_table(
-    catalog: &mut CatalogStore,
+    catalog: &mut Metadata,
     db_path: &str,
     old_name: &str,
     new_name: &str,

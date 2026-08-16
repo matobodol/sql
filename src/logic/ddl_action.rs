@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::catalog::catalog_store::CatalogStore;
+use crate::catalog::Metadata;
 use crate::disk::{BufferPoolManager, TableHeap};
 use crate::index::IndexRegistry;
 use crate::schema::Column;
@@ -13,7 +13,7 @@ use crate::{ColumnPosition, DomainError, RowId, TableContext, TableId};
 
 // --- ALTER ACTION
 pub(crate) fn apply_add_columns(
-    catalog: &mut CatalogStore,
+    catalog: &mut Metadata,
     tables: &mut HashMap<TableId, TableContext>,
     table_name: &str,
     columns: Vec<(String, DataType, Vec<ColumnConstraint>, ColumnPosition)>,
@@ -127,7 +127,7 @@ pub(crate) fn apply_add_columns(
 }
 
 pub(crate) fn apply_drop_column(
-    catalog: &mut CatalogStore,
+    catalog: &mut Metadata,
     tables: &mut HashMap<TableId, TableContext>,
     table_name: &str,
     col_name: &str,
@@ -195,7 +195,7 @@ pub(crate) fn apply_drop_column(
 }
 
 pub(crate) fn apply_rename_column(
-    catalog: &mut CatalogStore,
+    catalog: &mut Metadata,
     table_name: &str,
     old_name: &str,
     new_name: &str,
@@ -212,7 +212,7 @@ pub(crate) fn apply_rename_column(
 }
 
 pub(crate) fn apply_modify_column_type(
-    catalog: &mut CatalogStore,
+    catalog: &mut Metadata,
     table_name: &str,
     col_name: &str,
     new_type: DataType,
@@ -230,7 +230,7 @@ pub(crate) fn apply_modify_column_type(
 }
 
 pub(crate) fn apply_add_constraint(
-    catalog: &mut CatalogStore,
+    catalog: &mut Metadata,
     tables: &mut HashMap<TableId, TableContext>,
     table_name: &str,
     col_name: &str,
@@ -275,7 +275,7 @@ pub(crate) fn apply_add_constraint(
 }
 
 pub(crate) fn apply_drop_constraint(
-    catalog: &mut CatalogStore,
+    catalog: &mut Metadata,
     table_name: &str,
     col_name: &str,
     constraint: ColumnConstraint,
@@ -291,7 +291,7 @@ pub(crate) fn apply_drop_constraint(
 }
 
 pub(crate) fn apply_set_default(
-    catalog: &mut CatalogStore,
+    catalog: &mut Metadata,
     table_name: &str,
     col_name: &str,
     default_val: Option<ValueType>,
