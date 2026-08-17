@@ -4,16 +4,15 @@ use std::sync::Arc;
 use crate::catalog::Metadata;
 use crate::disk::{BufferPoolManager, TableHeap};
 use crate::index::IndexRegistry;
-use crate::schema::Column;
-use crate::schema::column_constraint::ColumnConstraint;
-use crate::types::data_type::DataType;
-use crate::types::value_type::ValueType;
 use crate::validator::validate_enum_variants;
-use crate::{ColumnPosition, DomainError, RowId, TableContext, TableId};
+use crate::{
+    Column, ColumnConstraint, ColumnPosition, DataType, DomainError, RowId, TableContext, TableId,
+    ValueType,
+};
 
 // --- ALTER ACTION
 pub(crate) fn apply_add_columns(
-    catalog: &mut Metadata,
+    meta: &mut Metadata,
     tables: &mut HashMap<TableId, TableContext>,
     table_name: &str,
     columns: Vec<(String, DataType, Vec<ColumnConstraint>, ColumnPosition)>,
@@ -22,19 +21,19 @@ pub(crate) fn apply_add_columns(
         return Ok(());
     }
 
-    let table_id = catalog.get_table_id(table_name)?;
+    let table_id = meta.get_table_id(table_name)?;
 
     let mut seen = HashSet::new();
     // TAHAP VALIDASI: Cek semua kolom di batch terhadap katalog DAN duplikat internal
     for (col_name, _, _, _) in &columns {
         // Cek apakah sudah ada di database ATAU duplikat di dalam batch ini
-        if catalog.get_column_id(table_id, col_name).is_ok() || !seen.insert(col_name) {
+        if meta.get_column_id(table_id, col_name).is_ok() || !seen.insert(col_name) {
             return Err(DomainError::ColumnAlreadyExists(col_name.clone().into()));
         }
     }
 
     for (col_name, sql_type, constraints, position) in columns {
-        let current_schema = catalog.get_schema(table_id)?;
+        let current_schema = meta.get_schema(table_id)?;
 
         // OPTIMASI 1: Hybrid Lookup (Mencoba resolusi langsung dari skema, fallback ke pencarian case-insensitive)
         let target_idx = match position {
@@ -58,7 +57,7 @@ pub(crate) fn apply_add_columns(
             ColumnPosition::Default => current_schema.columns().len(),
         };
 
-        catalog.register_column_at(
+        meta.register_column_at(
             table_id,
             &col_name,
             sql_type.clone(),
@@ -111,7 +110,7 @@ pub(crate) fn apply_add_columns(
         }
     }
 
-    let new_schema = catalog.get_schema(table_id)?;
+    let new_schema = meta.get_schema(table_id)?;
     let context = tables
         .get_mut(&table_id)
         .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
@@ -136,21 +135,21 @@ pub(crate) fn apply_add_columns(
 }
 
 pub(crate) fn apply_drop_column(
-    catalog: &mut Metadata,
+    meta: &mut Metadata,
     tables: &mut HashMap<TableId, TableContext>,
     table_name: &str,
     col_name: &str,
 ) -> Result<(), DomainError> {
-    let table_id = catalog.get_table_id(table_name)?;
-    let col_id = catalog.get_column_id(table_id, col_name)?;
+    let table_id = meta.get_table_id(table_name)?;
+    let col_id = meta.get_column_id(table_id, col_name)?;
 
-    let current_schema = catalog.get_schema(table_id)?;
+    let current_schema = meta.get_schema(table_id)?;
     let col_idx = current_schema
         .get_column_index_by_name(col_name)
         .ok_or_else(|| DomainError::eval_error(format!("Kolom '{col_name}' tidak ditemukan")))?;
 
-    catalog.unregister_column(table_id, col_name)?;
-    let new_schema = catalog.get_schema(table_id)?;
+    meta.unregister_column(table_id, col_name)?;
+    let new_schema = meta.get_schema(table_id)?;
 
     let context = tables
         .get_mut(&table_id)
@@ -204,15 +203,23 @@ pub(crate) fn apply_drop_column(
 }
 
 pub(crate) fn apply_rename_column(
-    catalog: &mut Metadata,
+    meta: &mut Metadata,
     table_name: &str,
     old_name: &str,
     new_name: &str,
 ) -> Result<(), DomainError> {
-    let table_id = catalog.get_table_id(table_name)?;
-    let col_id = catalog.get_column_id(table_id, old_name)?;
+    let table_id = meta.get_table_id(table_name)?;
 
-    catalog.mutate_column(table_id, col_id, |col| {
+    // cek apakah nama baru sudah dipakai di meta
+    if meta.get_column_id(table_id, new_name).is_ok() {
+        return Err(DomainError::eval_error(format!(
+            "new name already axist: {}",
+            new_name
+        )));
+    }
+    let col_id = meta.get_column_id(table_id, old_name)?;
+
+    meta.mutate_column(table_id, col_id, |col| {
         col.name = new_name.to_string();
     })?;
 
@@ -221,17 +228,17 @@ pub(crate) fn apply_rename_column(
 }
 
 pub(crate) fn apply_modify_column_type(
-    catalog: &mut Metadata,
+    meta: &mut Metadata,
     table_name: &str,
     col_name: &str,
     new_type: DataType,
 ) -> Result<(), DomainError> {
     validate_enum_variants(&new_type)?;
 
-    let table_id = catalog.get_table_id(table_name)?;
-    let col_id = catalog.get_column_id(table_id, col_name)?;
+    let table_id = meta.get_table_id(table_name)?;
+    let col_id = meta.get_column_id(table_id, col_name)?;
 
-    catalog.mutate_column(table_id, col_id, |col| {
+    meta.mutate_column(table_id, col_id, |col| {
         col.sql_type = new_type.clone();
     })?;
 
@@ -239,22 +246,22 @@ pub(crate) fn apply_modify_column_type(
 }
 
 pub(crate) fn apply_add_constraint(
-    catalog: &mut Metadata,
+    meta: &mut Metadata,
     tables: &mut HashMap<TableId, TableContext>,
     table_name: &str,
     col_name: &str,
     constraint: ColumnConstraint,
 ) -> Result<(), DomainError> {
-    let table_id = catalog.get_table_id(table_name)?;
-    let col_id = catalog.get_column_id(table_id, col_name)?;
+    let table_id = meta.get_table_id(table_name)?;
+    let col_id = meta.get_column_id(table_id, col_name)?;
 
-    catalog.mutate_column(table_id, col_id, |col| {
+    meta.mutate_column(table_id, col_id, |col| {
         if !col.constraints.contains(&constraint) {
             col.constraints.push(constraint.clone());
         }
     })?;
 
-    let new_schema = catalog.get_schema(table_id)?;
+    let new_schema = meta.get_schema(table_id)?;
 
     if let Some(context) = tables.get_mut(&table_id) {
         if matches!(
@@ -284,15 +291,15 @@ pub(crate) fn apply_add_constraint(
 }
 
 pub(crate) fn apply_drop_constraint(
-    catalog: &mut Metadata,
+    meta: &mut Metadata,
     table_name: &str,
     col_name: &str,
     constraint: ColumnConstraint,
 ) -> Result<(), DomainError> {
-    let table_id = catalog.get_table_id(table_name)?;
-    let col_id = catalog.get_column_id(table_id, col_name)?;
+    let table_id = meta.get_table_id(table_name)?;
+    let col_id = meta.get_column_id(table_id, col_name)?;
 
-    catalog.mutate_column(table_id, col_id, |col| {
+    meta.mutate_column(table_id, col_id, |col| {
         col.constraints.retain(|c| c != &constraint);
     })?;
 
@@ -300,15 +307,15 @@ pub(crate) fn apply_drop_constraint(
 }
 
 pub(crate) fn apply_set_default(
-    catalog: &mut Metadata,
+    meta: &mut Metadata,
     table_name: &str,
     col_name: &str,
     default_val: Option<ValueType>,
 ) -> Result<(), DomainError> {
-    let table_id = catalog.get_table_id(table_name)?;
-    let col_id = catalog.get_column_id(table_id, col_name)?;
+    let table_id = meta.get_table_id(table_name)?;
+    let col_id = meta.get_column_id(table_id, col_name)?;
 
-    catalog.mutate_column(table_id, col_id, |col| {
+    meta.mutate_column(table_id, col_id, |col| {
         col.constraints
             .retain(|c| !matches!(c, ColumnConstraint::Default(_)));
         col.constraints

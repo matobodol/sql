@@ -14,14 +14,14 @@ use crate::{
 
 // --- TABLE ACTION
 pub(crate) fn apply_create_table(
-    catalog: &mut Metadata,
+    meta: &mut Metadata,
     tables: &mut HashMap<TableId, TableContext>,
     db_path: &str,
     table_name: &str,
     raw_columns: Vec<(String, DataType, Vec<ColumnConstraint>)>,
 ) -> Result<(), DomainError> {
     if raw_columns.is_empty() {
-        return Err(DomainError::catalog(
+        return Err(DomainError::metadata(
             "Table tidak boleh kosong, setidaknya buat 1 kolom.",
         ));
     }
@@ -38,14 +38,14 @@ pub(crate) fn apply_create_table(
     }
 
     // FASE 2: Eksekusi setelah dijamin 100% aman
-    let table_id = catalog.register_table(table_name)?;
+    let table_id = meta.register_table(table_name)?;
     for (col_name, sql_type, constraints) in raw_columns {
-        if let Err(err) = catalog.register_column(table_id, &col_name, sql_type, constraints) {
-            let _ = catalog.unregister_table(table_name);
+        if let Err(err) = meta.register_column(table_id, &col_name, sql_type, constraints) {
+            let _ = meta.unregister_table(table_name);
             return Err(err);
         }
     }
-    let schema = catalog.get_schema(table_id)?;
+    let schema = meta.get_schema(table_id)?;
 
     // Inisialisasi file fisik .db khusus untuk tabel baru
     let table_file_path = Path::new(db_path).join(format!("{}.db", table_name));
@@ -91,12 +91,12 @@ pub(crate) fn apply_create_table(
 }
 
 pub(crate) fn apply_drop_table(
-    catalog: &mut Metadata,
+    meta: &mut Metadata,
     tables: &mut HashMap<TableId, TableContext>,
     db_path: &str,
     table_name: &str,
 ) -> Result<(), DomainError> {
-    let table_id = catalog.unregister_table(table_name)?;
+    let table_id = meta.unregister_table(table_name)?;
     tables.remove(&table_id);
 
     // Hapus file fisik .db milik tabel dari disk
@@ -105,18 +105,18 @@ pub(crate) fn apply_drop_table(
         std::fs::remove_file(&table_file_path).map_err(|e| DomainError::storage(e.to_string()))?;
     }
 
-    if catalog.list_tables().is_empty() {}
+    if meta.list_tables().is_empty() {}
     Ok(())
 }
 
 pub(crate) fn apply_rename_table(
-    catalog: &mut Metadata,
+    meta: &mut Metadata,
     db_path: &str,
     old_name: &str,
     new_name: &str,
 ) -> Result<(), DomainError> {
     #[allow(warnings)]
-    let table_id = catalog.rename_table(old_name, new_name)?;
+    let table_id = meta.rename_table(old_name, new_name)?;
 
     // Ubah nama file fisik .db di disk
     let old_path = Path::new(db_path).join(format!("{}.db", old_name));
@@ -172,6 +172,7 @@ pub(crate) fn execute_describe_table(columns: &[Column]) -> Result<QueryResult, 
             ValueType::Text(Arc::from(extra_str)),
         ];
 
+        // rows.push(Row::with_id(row_id, values));
         rows.push(Row::with_id(row_id, values));
     }
 
@@ -188,7 +189,7 @@ pub(crate) fn virtual_column(list: Vec<String>) -> Result<(Schema, Vec<Row>), Do
     let mut rows = Vec::with_capacity(list.len());
 
     for (idx, name) in list.into_iter().enumerate() {
-        let row_id = RowId((idx + 1) as u64);
+        let row_id = RowId(idx as u64);
         let values = vec![ValueType::Text(Arc::from(name.as_str()))];
         rows.push(Row::with_id(row_id, values));
     }

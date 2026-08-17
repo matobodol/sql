@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
 use crate::{
-    ColumnConstraint, ColumnPosition, DataType, DatabaseManager, DomainError, Expr, Statement,
-    ValueType,
+    AggregateFunc, ColumnConstraint, ColumnPosition, DataType, DatabaseManager, DomainError, Expr,
+    OrderByExpr, ValueType,
     api_command::{CMD, execute},
     catalog::QueryResult,
-    logic::table_action::virtual_column,
+    execution::SelectStatement,
+    logic::{Statement, table_action::virtual_column},
 };
 
 type DBMError = Result<QueryResult, DomainError>;
@@ -43,6 +44,11 @@ impl DBM {
     /// let mut db = DBM::new();
     /// db.execute(vec![CMD::CreateDatabase{db_name: "mydb".to_string()}]);
     /// ```
+    ///
+    /// Gunakan konstruktor :
+    /// build_statement() dan build_agregate_func
+    /// untuk membangun execute elect
+    ///
     pub fn execute(&mut self, cmd: Vec<CMD>) -> DBMError {
         execute(self, cmd)
     }
@@ -216,8 +222,102 @@ impl DBM {
     }
 
     // -- DQL
-    pub(crate) fn select(&mut self, table_name: &str, statements: Statement) -> DBMError {
+    pub(crate) fn select(&mut self, table_name: &str, stmt: Statement) -> DBMError {
         let db_mut = self.dbm.active_database_mut()?;
-        db_mut.select(table_name, statements)
+        db_mut.select(table_name, stmt)
+    }
+}
+
+impl DBM {
+    pub fn build_statement(
+        &self,
+        table_name: &str,
+        projection: Vec<Expr>,
+        // Kondisi penyaringan baris data (klausa WHERE).
+        selection: Option<Expr>,
+        // Daftar ID kolom yang digunakan untuk pengelompokan data (klausa GROUP BY).
+        group_by: Vec<String>,
+        // Daftar fungsi agregasi yang diterapkan (misalnya SUM, COUNT, AVG, MIN, MAX).
+        aggregates: Vec<AggregateFunc>,
+        // Pengaturan pengurutan baris hasil query (klausa ORDER BY).
+        order_by: Vec<OrderByExpr>,
+        // Batas jumlah maksimum baris yang dikembalikan (klausa LIMIT).
+        limit: Option<usize>,
+
+        // Jumlah baris awal yang dilewati sebelum mulai mengembalikan hasil (klausa OFFSET).
+        offset: usize,
+    ) -> Result<SelectStatement, DomainError> {
+        let db_ref = self.dbm.active_database_ref()?;
+        let meta = db_ref.meta();
+        let table_id = meta.get_table_id(table_name)?;
+
+        // Closure standar untuk menerjemahkan nama kolom string menjadi ColumnId via katalog
+        let get_col_id = |name: &str| meta.get_column_id(table_id, name);
+
+        // 1. Bind group_by dari Vec<String> ke Vec<ColumnId>
+        let mut fixed_group_by = Vec::with_capacity(group_by.len());
+        for name in &group_by {
+            fixed_group_by.push(get_col_id(name)?);
+        }
+
+        let stmt = SelectStatement {
+            projection,
+            selection,
+            group_by: fixed_group_by,
+            aggregates,
+            order_by,
+            limit,
+            offset,
+        };
+
+        Ok(stmt)
+    }
+
+    pub fn build_agregate_func(
+        &self,
+        table_name: &str,
+        count: Option<String>,
+        sum: Option<String>,
+        avg: Option<String>,
+        min: Option<String>,
+        max: Option<String>,
+    ) -> Result<Vec<AggregateFunc>, DomainError> {
+        let db_ref = self.dbm.active_database_ref()?;
+        let meta = db_ref.meta();
+        let table_id = meta.get_table_id(table_name)?;
+
+        // Closure standar untuk menerjemahkan nama kolom string menjadi ColumnId via katalog
+        let get_col_id = |name: &str| meta.get_column_id(table_id, name);
+
+        let mut aggregates = Vec::new();
+
+        if let Some(name) = count {
+            let id = get_col_id(&name)?;
+            aggregates.push(AggregateFunc::Count(Some(id)))
+        } else {
+            aggregates.push(AggregateFunc::Count(None));
+        }
+
+        if let Some(name) = sum {
+            let id = get_col_id(&name)?;
+            aggregates.push(AggregateFunc::Sum(id));
+        }
+
+        if let Some(name) = avg {
+            let id = get_col_id(&name)?;
+            aggregates.push(AggregateFunc::Avg(id));
+        }
+
+        if let Some(name) = min {
+            let id = get_col_id(&name)?;
+            aggregates.push(AggregateFunc::Min(id));
+        }
+
+        if let Some(name) = max {
+            let id = get_col_id(&name)?;
+            aggregates.push(AggregateFunc::Max(id));
+        }
+
+        Ok(aggregates)
     }
 }

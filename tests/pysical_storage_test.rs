@@ -17,7 +17,7 @@ mod tests {
 
         if path.exists() {
             std::fs::remove_dir_all(path)
-                .map_err(|e| DomainError::catalog(format!("gagal hapus file: {e}")))?;
+                .map_err(|e| DomainError::metadata(format!("gagal hapus file: {e}")))?;
         }
 
         Ok(())
@@ -165,7 +165,7 @@ mod tests {
         let res = dbm.execute(vec![CMD::CreateDatabase {
             db_name: DB_NAME.to_string(),
         }]);
-        debug_assert!(res.is_ok(), "creat db: harus ok");
+        debug_assert!(res.is_ok(), "creat db: harus suskes");
 
         let res = dbm.execute(vec![CMD::UseDatabase {
             db_name: DB_NAME.to_string(),
@@ -220,7 +220,7 @@ mod tests {
             table_name: TBL_NAME.to_string(),
             raw_columns,
         }]);
-        debug_assert!(res.is_err(), "harus gagal: add column duplicate: {:?}", res);
+        debug_assert!(res.is_err(), "harus error: add column duplicate: {:?}", res);
 
         // add columns uniq
         let raw_columns = vec![
@@ -244,7 +244,40 @@ mod tests {
             table_name: TBL_NAME.to_string(),
             raw_columns,
         }]);
-        debug_assert!(res.is_ok(), "harus ok: add column uniq");
+        debug_assert!(res.is_ok(), "harus sukses: add column uniq");
+
+        // disini column yg terdaftar id, name, status.
+
+        // tes invalid: rename to non free namespace
+        let res = dbm.execute(vec![CMD::RenameColumn {
+            table_name: TBL_NAME.to_string(),
+            old_name: "status".to_string(),
+            new_name: "name".to_string(),
+        }]);
+        debug_assert!(res.is_err(), "harus error: rename to non free namespace");
+
+        // rename to free namespace
+        let res = dbm.execute(vec![CMD::RenameColumn {
+            table_name: TBL_NAME.to_string(),
+            old_name: "status".to_string(),
+            new_name: "state".to_string(),
+        }]);
+        debug_assert!(res.is_ok(), "harus sukses: rename to free namespace");
+
+        // tes invalid: drop column no active
+        let res = dbm.execute(vec![CMD::DropColumn {
+            table_name: TBL_NAME.to_string(),
+            column_name: "no name".to_string(),
+        }]);
+        debug_assert!(res.is_err(), "harus error: drop column no active");
+
+        // drop column active
+        let res = dbm.execute(vec![CMD::DropColumn {
+            table_name: TBL_NAME.to_string(),
+            column_name: "state".to_string(),
+        }]);
+        debug_assert!(res.is_ok(), "harus sukses: drop column active");
+
         Ok(())
     }
 }

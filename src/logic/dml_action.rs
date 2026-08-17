@@ -17,7 +17,7 @@ struct StagedUpdate {
 }
 
 pub(crate) fn handle_insert(
-    catalog: &Metadata,
+    meta: &Metadata,
     table_heap: &mut TableHeap,
     bpm: &mut BufferPoolManager,
     index_registry: &mut IndexRegistry,
@@ -29,7 +29,7 @@ pub(crate) fn handle_insert(
         return Ok(0);
     }
 
-    let schema = catalog.get_schema(table_id)?;
+    let schema = meta.get_schema(table_id)?;
     let columns = schema.columns();
     let total_rows = raw_rows.len();
 
@@ -118,14 +118,14 @@ pub(crate) fn handle_insert(
 }
 
 pub(crate) fn handle_delete(
-    catalog: &Metadata,
+    meta: &Metadata,
     table_heap: &mut TableHeap,
     bpm: &mut BufferPoolManager,
     index_registry: &mut IndexRegistry,
     table_id: TableId,
     predicate: Option<&Expr>,
 ) -> Result<usize, DomainError> {
-    let schema_cols = catalog.get_schema_columns(table_id)?;
+    let schema_cols = meta.get_schema_columns(table_id)?;
     let schema = Schema::new(schema_cols.to_vec())?;
     let columns = schema.columns();
 
@@ -211,7 +211,7 @@ pub(crate) fn handle_delete(
 }
 
 pub(crate) fn handle_update(
-    catalog: &Metadata,
+    meta: &Metadata,
     table_heap: &mut TableHeap,
     bpm: &mut BufferPoolManager,
     index_registry: &mut IndexRegistry,
@@ -223,7 +223,7 @@ pub(crate) fn handle_update(
         return Ok(0);
     }
 
-    let schema_cols = catalog.get_schema_columns(table_id)?;
+    let schema_cols = meta.get_schema_columns(table_id)?;
     let schema = Schema::new(schema_cols.to_vec())?;
     let columns = schema.columns();
 

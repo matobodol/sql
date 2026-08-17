@@ -39,3 +39,10 @@ impl Deref for Row {
         &self.values
     }
 }
+
+impl From<Row> for Vec<ValueType> {
+    #[inline]
+    fn from(row: Row) -> Self {
+        row.values
+    }
+}

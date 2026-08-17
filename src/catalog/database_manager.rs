@@ -51,7 +51,7 @@ impl DatabaseManager {
     pub fn current_username(&self) -> Result<&str, DomainError> {
         self.current_user
             .as_deref()
-            .ok_or_else(|| DomainError::catalog("Tidak ada user yang sedang login."))
+            .ok_or_else(|| DomainError::metadata("Tidak ada user yang sedang login."))
     }
 
     pub fn use_database(&mut self, db_name: &str) -> Result<(), DomainError> {
@@ -182,7 +182,7 @@ impl DatabaseManager {
         // Mengirim username dan db_name ke constructor Database
         if let Ok(db) = Database::load_from_disk(username, db_name) {
             self.databases.insert(composite_key, db);
-            return Err(DomainError::catalog("database already axis"));
+            return Err(DomainError::metadata("database already axis"));
         } else {
             let db = Database::new(username, db_name);
             self.databases.insert(composite_key, db);
@@ -291,7 +291,7 @@ impl DatabaseManager {
     pub fn create_user(&mut self, username: &str, password_hash: &str) -> Result<(), DomainError> {
         let current = self.current_username()?.to_lowercase();
         if !self.user_manager.is_admin(&current)? {
-            return Err(DomainError::catalog(
+            return Err(DomainError::metadata(
                 "Akses ditolak: memerlukan hak akses root.",
             ));
         }
@@ -330,7 +330,7 @@ impl DatabaseManager {
 
     pub fn drop_user(&mut self, username: &str) -> Result<(), DomainError> {
         if self.current_username()? != "root" {
-            return Err(DomainError::catalog(
+            return Err(DomainError::metadata(
                 "Akses ditolak: memerlukan hak akses root.",
             ));
         }

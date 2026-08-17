@@ -55,7 +55,7 @@ pub enum DomainError {
     NoActiveDatabase,
 
     #[error("{0}")]
-    Catalog(Arc<str>),
+    Metadata(Arc<str>),
 
     #[error("Kesalahan penyimpanan/I/O: {0}")]
     Storage(Arc<str>),
@@ -88,7 +88,7 @@ impl DomainError {
     }
 
     #[inline]
-    pub fn catalog(msg: impl Into<Arc<str>>) -> Self {
-        Self::Catalog(msg.into())
+    pub fn metadata(msg: impl Into<Arc<str>>) -> Self {
+        Self::Metadata(msg.into())
     }
 }

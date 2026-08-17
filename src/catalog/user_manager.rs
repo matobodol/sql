@@ -95,7 +95,7 @@ impl UserManager {
             }
         }
 
-        Err(DomainError::catalog(format!(
+        Err(DomainError::metadata(format!(
             "Access denied: user '{}' lacks permission '{:?}' on database '{}'",
             username, required_perm, db_name
         )))
@@ -138,7 +138,7 @@ impl UserManager {
 
         // 1. Pencegahan: User root tidak boleh di-rename
         if old_lower == "root" {
-            return Err(DomainError::catalog("User root tidak dapat di-rename."));
+            return Err(DomainError::metadata("User root tidak dapat di-rename."));
         }
 
         // 2. Pastikan user baru belum ada
@@ -176,7 +176,7 @@ impl UserManager {
 
         // Pencegahan agar user root tidak sengaja terhapus
         if username_lower == "root" {
-            return Err(DomainError::catalog("User root tidak dapat dihapus."));
+            return Err(DomainError::metadata("User root tidak dapat dihapus."));
         }
 
         // 1. Hapus dari map memori (`self.users`)

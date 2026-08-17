@@ -14,7 +14,7 @@ pub use filter::FilterOperator;
 pub use index_scan::IndexScanOperator;
 pub use limit::LimitOperator;
 pub use operator::PhysicalOperator;
-pub use planner::{PhysicalPlanner, Statement};
+pub use planner::{PhysicalPlanner, SelectStatement};
 pub use projection::ProjectionOperator;
 pub use seq_scan::SeqScanOperator;
 pub use sort::{OrderByExpr, SortOperator, SortOrder};

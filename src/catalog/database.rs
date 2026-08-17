@@ -5,6 +5,7 @@ use crate::catalog::{BASE_PATH, EXT_AUTO_INC, EXT_INDEX_REGISTRY, METADATA};
 use crate::disk::{BufferPoolManager, DiskManager, TableHeap};
 use crate::expression::evaluator::bind_expr;
 use crate::index::IndexRegistry;
+use crate::logic::dql_action::Statement;
 use crate::logic::table_action::virtual_column;
 use crate::logic::{
     apply_add_columns, apply_add_constraint, apply_create_table, apply_drop_column,
@@ -12,7 +13,9 @@ use crate::logic::{
     apply_rename_table, apply_set_default, handle_delete, handle_insert, handle_update,
 };
 use crate::table_store::DiskStorage;
-use crate::{ColumnConstraint, DataType, Expr, Row, Schema, Statement, TableContext, ValueType};
+use crate::{
+    ColumnConstraint, ColumnPosition, DataType, Expr, Row, Schema, TableContext, ValueType,
+};
 use crate::{
     DomainError, TableId,
     catalog::Metadata,
@@ -30,7 +33,7 @@ pub enum QueryResult {
 
 #[derive(Debug)]
 pub struct Database {
-    catalog: Metadata,
+    metadata: Metadata,
     // Memetakan TableId ke konteks tabel (menyimpan data di file .db terpisah)
     tables: HashMap<TableId, TableContext>,
     db_path: String,
@@ -50,7 +53,7 @@ impl Database {
         let _ = std::fs::create_dir_all(&db_path);
 
         Self {
-            catalog: Metadata::new(),
+            metadata: Metadata::new(),
             tables: HashMap::new(),
             db_path,
         }
@@ -63,11 +66,11 @@ impl Database {
 
         // 1. Simpan metadata katalog (`metadata.bin`)
         let metadata_path = path.join(METADATA);
-        DiskStorage::save_to_file(&metadata_path, &self.catalog)?;
+        DiskStorage::save_to_file(&metadata_path, &self.metadata)?;
 
         // 2. Flush buffer pool, simpan index, dan simpan auto_increment_counters
         for (table_id, context) in &mut self.tables {
-            let table_name = self.catalog.get_table_name(*table_id)?;
+            let table_name = self.metadata.get_table_name(*table_id)?;
             context.buffer_pool_manager.flush_all_pages()?;
 
             // Simpan indeks B-Tree tabel ke file terpisah
@@ -95,13 +98,13 @@ impl Database {
 
         // 1. Load metadata katalog (`metadata.bin`)
         let metadata_path = path.join(METADATA);
-        let catalog: Metadata = DiskStorage::load_from_file(&metadata_path)?;
+        let meta: Metadata = DiskStorage::load_from_file(&metadata_path)?;
 
         let mut tables = HashMap::new();
 
         // 2. Load setiap tabel fisik (`users.db`, `karyawan.db`, dll.)
-        for table_name in catalog.list_tables() {
-            let table_id = catalog.get_table_id(&table_name)?;
+        for table_name in meta.list_tables() {
+            let table_id = meta.get_table_id(&table_name)?;
             let table_file_path = path.join(format!("{}.db", table_name));
 
             if table_file_path.exists() {
@@ -123,7 +126,7 @@ impl Database {
                 let auto_increment_counters = if auto_inc_path.exists() {
                     DiskStorage::load_from_file(&auto_inc_path)?
                 } else {
-                    let schema = catalog.get_schema(table_id)?;
+                    let schema = meta.get_schema(table_id)?;
                     let mut counters = HashMap::new();
                     for col in schema.columns() {
                         if let Some(crate::schema::Increment::Enabled { start, .. }) =
@@ -148,7 +151,7 @@ impl Database {
         }
 
         Ok(Self {
-            catalog,
+            metadata: meta,
             tables,
             db_path,
         })
@@ -161,13 +164,13 @@ impl Database {
     // ==========================================
 
     /// Mengambil referensi ke katalog metadata.
-    pub fn catalog(&self) -> &Metadata {
-        &self.catalog
+    pub fn meta(&self) -> &Metadata {
+        &self.metadata
     }
 
     /// Mengambil referensi mutabel ke katalog metadata.
-    pub fn catalog_mut(&mut self) -> &mut Metadata {
-        &mut self.catalog
+    pub fn meta_mut(&mut self) -> &mut Metadata {
+        &mut self.metadata
     }
 
     /// Mengambil referensi ke peta penyimpanan tabel fisik (`TableContext`).
@@ -192,7 +195,7 @@ impl Database {
         raw_columns: Vec<(String, crate::DataType, Vec<crate::ColumnConstraint>)>,
     ) -> Result<(), DomainError> {
         apply_create_table(
-            &mut self.catalog,
+            &mut self.metadata,
             &mut self.tables,
             &self.db_path,
             table_name,
@@ -201,23 +204,23 @@ impl Database {
         Ok(())
     }
     pub fn rename_table(&mut self, old_name: &str, new_name: &str) -> Result<(), DomainError> {
-        apply_rename_table(&mut self.catalog, &self.db_path, old_name, new_name)
+        apply_rename_table(&mut self.metadata, &self.db_path, old_name, new_name)
     }
     pub fn drop_table(&mut self, table_name: &str) -> Result<(), DomainError> {
         apply_drop_table(
-            &mut self.catalog,
+            &mut self.metadata,
             &mut self.tables,
             &self.db_path,
             table_name,
         )
     }
     pub fn show_tables(&self) -> Result<(Schema, Vec<Row>), DomainError> {
-        let table_names = self.catalog.list_tables();
+        let table_names = self.metadata.list_tables();
         virtual_column(table_names)
     }
     pub fn describe_table(&self, table_name: &str) -> Result<QueryResult, DomainError> {
-        let table_id = self.catalog.get_table_id(&table_name)?;
-        let schema = self.catalog.get_schema(table_id)?;
+        let table_id = self.metadata.get_table_id(&table_name)?;
+        let schema = self.metadata.get_schema(table_id)?;
         execute_describe_table(schema.columns())
     }
 
@@ -225,17 +228,17 @@ impl Database {
     pub fn add_columns(
         &mut self,
         table_name: &str,
-        raw_columns: Vec<(
-            String,
-            crate::DataType,
-            Vec<crate::ColumnConstraint>,
-            crate::ColumnPosition,
-        )>,
+        raw_columns: Vec<(String, DataType, Vec<ColumnConstraint>, ColumnPosition)>,
     ) -> Result<(), DomainError> {
-        apply_add_columns(&mut self.catalog, &mut self.tables, table_name, raw_columns)
+        apply_add_columns(
+            &mut self.metadata,
+            &mut self.tables,
+            table_name,
+            raw_columns,
+        )
     }
     pub fn drop_column(&mut self, table_name: &str, col_name: &str) -> Result<(), DomainError> {
-        apply_drop_column(&mut self.catalog, &mut self.tables, table_name, col_name)
+        apply_drop_column(&mut self.metadata, &mut self.tables, table_name, col_name)
     }
     pub fn rename_column(
         &mut self,
@@ -243,7 +246,7 @@ impl Database {
         old_name: &str,
         new_name: &str,
     ) -> Result<(), DomainError> {
-        apply_rename_column(&mut self.catalog, table_name, old_name, new_name)
+        apply_rename_column(&mut self.metadata, table_name, old_name, new_name)
     }
     pub fn modify_column_type(
         &mut self,
@@ -251,7 +254,7 @@ impl Database {
         col_name: &str,
         new_type: DataType,
     ) -> Result<(), DomainError> {
-        apply_modify_column_type(&mut self.catalog, table_name, col_name, new_type)
+        apply_modify_column_type(&mut self.metadata, table_name, col_name, new_type)
     }
     pub fn add_column_constraint(
         &mut self,
@@ -260,7 +263,7 @@ impl Database {
         constraint: ColumnConstraint,
     ) -> Result<(), DomainError> {
         apply_add_constraint(
-            &mut self.catalog,
+            &mut self.metadata,
             &mut self.tables,
             table_name,
             col_name,
@@ -273,7 +276,7 @@ impl Database {
         col_name: &str,
         constraint: ColumnConstraint,
     ) -> Result<(), DomainError> {
-        apply_drop_constraint(&mut self.catalog, table_name, col_name, constraint)
+        apply_drop_constraint(&mut self.metadata, table_name, col_name, constraint)
     }
     pub fn set_default(
         &mut self,
@@ -281,7 +284,7 @@ impl Database {
         col_name: &str,
         default_val: Option<ValueType>,
     ) -> Result<(), DomainError> {
-        apply_set_default(&mut self.catalog, table_name, col_name, default_val)
+        apply_set_default(&mut self.metadata, table_name, col_name, default_val)
     }
     // -- DML ACTION
     pub fn insert(
@@ -289,14 +292,14 @@ impl Database {
         table_name: &str,
         rows: Vec<Vec<ValueType>>,
     ) -> Result<QueryResult, DomainError> {
-        let table_id = self.catalog.get_table_id(&table_name)?;
+        let table_id = self.metadata.get_table_id(&table_name)?;
         let context = self
             .tables
             .get_mut(&table_id)
             .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
 
         let inserted_count = handle_insert(
-            &self.catalog,
+            &self.metadata,
             &mut context.table_heap,
             &mut context.buffer_pool_manager,
             &mut context.index_registry,
@@ -313,7 +316,7 @@ impl Database {
         assign: HashMap<String, Expr>,
         predicate: Option<Expr>,
     ) -> Result<QueryResult, DomainError> {
-        let table_id = self.catalog.get_table_id(&table_name)?;
+        let table_id = self.metadata.get_table_id(&table_name)?;
 
         let context = self
             .tables
@@ -322,11 +325,11 @@ impl Database {
 
         let mut assignments = HashMap::new();
         for (name, expr) in assign {
-            let col_id = self.catalog.get_column_id(table_id, &name)?;
+            let col_id = self.metadata.get_column_id(table_id, &name)?;
 
             // Bind juga ekspresi di assignment jika mengandung kolom
             let bound_expr = bind_expr(&expr, &|col_name| {
-                let schema_cols = self.catalog.get_schema_columns(table_id)?;
+                let schema_cols = self.metadata.get_schema_columns(table_id)?;
                 schema_cols
                     .iter()
                     .position(|col| col.name == col_name)
@@ -343,7 +346,7 @@ impl Database {
             Some(expr) => {
                 let bound = bind_expr(&expr, &|col_name| {
                     // Ambil posisi index kolom berdasarkan nama dari skema/katalog tabel
-                    let schema_cols = self.catalog.get_schema_columns(table_id)?;
+                    let schema_cols = self.metadata.get_schema_columns(table_id)?;
                     schema_cols
                         .iter()
                         .position(|col| col.name == col_name)
@@ -358,7 +361,7 @@ impl Database {
 
         // 2. Kirim bound_predicate.as_ref() ke handle_update
         let updated_count = handle_update(
-            &self.catalog,
+            &self.metadata,
             &mut context.table_heap,
             &mut context.buffer_pool_manager,
             &mut context.index_registry,
@@ -367,15 +370,6 @@ impl Database {
             bound_predicate.as_ref(),
         )?;
 
-        // let updated_count = handle_update(
-        //     &self.catalog,
-        //     &mut context.table_heap,
-        //     &mut context.buffer_pool_manager,
-        //     &mut context.index_registry,
-        //     table_id,
-        //     &assignments,
-        //     predicate.as_ref(),
-        // )?;
         Ok(QueryResult::Updated(updated_count))
     }
 
@@ -384,7 +378,7 @@ impl Database {
         table_name: &str,
         predicate: Option<Expr>,
     ) -> Result<QueryResult, DomainError> {
-        let table_id = self.catalog.get_table_id(&table_name)?;
+        let table_id = self.metadata.get_table_id(&table_name)?;
 
         let context = self
             .tables
@@ -392,7 +386,7 @@ impl Database {
             .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
 
         let deleted_count = handle_delete(
-            &self.catalog,
+            &self.metadata,
             &mut context.table_heap,
             &mut context.buffer_pool_manager,
             &mut context.index_registry,
@@ -401,26 +395,27 @@ impl Database {
         )?;
         Ok(QueryResult::Deleted(deleted_count))
     }
-    // -- DQL ACTION
+
+    // --- DQL
     pub fn select(
         &mut self,
         table_name: &str,
-        statements: Statement,
+        statement: Statement,
     ) -> Result<QueryResult, DomainError> {
-        let table_id = self.catalog.get_table_id(&table_name)?;
+        let table_id = self.metadata.get_table_id(table_name)?;
 
-        // Ubah .get() menjadi .get_mut() agar buffer_pool_manager bisa dipinjam secara mutabel
+        // Ambil konteks tabel dan jalankan eksekusi query[span_5](start_span)[span_5](end_span)
         let table_context = self
             .tables
             .get_mut(&table_id)
             .ok_or_else(|| DomainError::TableNotFound(Arc::from(table_name)))?;
 
         execute_select(
-            &self.catalog,
+            &self.metadata,
             &table_context.table_heap,
-            &mut table_context.buffer_pool_manager, // Sisipkan BufferPoolManager di argumen ke-3
+            &mut table_context.buffer_pool_manager,
             table_id,
-            statements,
+            statement,
         )
     }
 }

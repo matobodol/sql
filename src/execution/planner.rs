@@ -55,7 +55,7 @@ use crate::{
 /// };
 /// ```
 #[derive(Debug, Clone, PartialEq)]
-pub struct Statement {
+pub struct SelectStatement {
     /// Daftar ekspresi kolom atau operasi yang akan diproyeksikan (klausa SELECT).
     pub projection: Vec<Expr>,
 
@@ -85,7 +85,7 @@ impl PhysicalPlanner {
         table_heap: &TableHeap,
         bpm: &mut BufferPoolManager,
         schema: &Schema,
-        stmt: &Statement,
+        stmt: &SelectStatement,
     ) -> Result<Box<dyn PhysicalOperator>, DomainError> {
         // ------------------------------------------------------------------
         // LANGKAH 1: Inisialisasi Root Scan Operator (IndexScan vs SeqScan)

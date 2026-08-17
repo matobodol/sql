@@ -1,6 +1,5 @@
 //! Physical operator untuk mengeksekusi pengurutan baris data (`ORDER BY ASC/DESC`).
 
-use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::sync::Arc;
 use std::vec::IntoIter;
@@ -11,7 +10,7 @@ use crate::{
 };
 
 /// Menentukan arah pengurutan data (`ASC` atau `DESC`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SortOrder {
     /// Pengurutan secara menaik (Ascending)
     Ascending,
@@ -20,7 +19,7 @@ pub enum SortOrder {
 }
 
 /// Merepresentasikan ekspresi pengurutan beserta arahnya dalam klausa ORDER BY.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OrderByExpr {
     /// Ekspresi atau kolom yang menjadi acuan pengurutan
     pub expr: Expr,

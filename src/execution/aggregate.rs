@@ -1,4 +1,3 @@
-use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::vec::IntoIter;
@@ -8,7 +7,7 @@ use crate::execution::operator::PhysicalOperator;
 use crate::{ColumnId, DomainError, Row, RowId, Schema, ValueType};
 
 /// Menentukan jenis fungsi agregasi SQL yang didukung oleh sistem (COUNT, SUM, AVG, MIN, MAX).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AggregateFunc {
     /// Menghitung jumlah baris, dapat berupa `COUNT(*)` (tanpa parameter kolom) atau `COUNT(column)`.
     Count(Option<ColumnId>),

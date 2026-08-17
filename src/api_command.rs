@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::{
-    ColumnConstraint, ColumnPosition, DBM, DataType, DomainError, Expr, Statement, ValueType,
-    catalog::QueryResult,
+    ColumnConstraint, ColumnPosition, DBM, DataType, DomainError, Expr, ValueType,
+    catalog::QueryResult, logic::Statement,
 };
 
 pub enum CMD {
