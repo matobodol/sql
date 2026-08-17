@@ -123,89 +123,85 @@ pub(crate) fn execute(dbm: &mut DBM, commands: Vec<CMD>) -> Result<QueryResult, 
     for cmd in commands {
         let result = match cmd {
             // user
-            CMD::ShowUsers => dbm.api_user_show(),
-            CMD::UserLogin { username, password } => dbm.api_user_login(&username, &password),
-            CMD::CreateUser { username, passwd } => dbm.api_user_create(&username, &passwd),
-            CMD::DropUser { username } => dbm.api_user_drop(&username),
-            CMD::RenameUser { old_name, new_name } => dbm.api_user_rename(&old_name, &new_name),
-            CMD::ChangePassword { old_pass, new_pass } => {
-                dbm.api_user_change_password(old_pass, &new_pass)
-            }
+            CMD::ShowUsers => dbm.show_users(),
+            CMD::UserLogin { username, password } => dbm.user_login(&username, &password),
+            CMD::CreateUser { username, passwd } => dbm.create_user(&username, &passwd),
+            CMD::DropUser { username } => dbm.drop_user(&username),
+            CMD::RenameUser { old_name, new_name } => dbm.rename_user(&old_name, &new_name),
+            CMD::ChangePassword { old_pass, new_pass } => dbm.change_password(old_pass, &new_pass),
 
             // database
-            CMD::ShowDatabases => dbm.api_databases_show(),
-            CMD::UseDatabase { db_name } => dbm.api_database_use(&db_name),
-            CMD::CreateDatabase { db_name } => dbm.api_database_create(&db_name),
-            CMD::DropDatabase { db_name } => dbm.api_database_drop(&db_name),
-            CMD::RenamDatabase { old_name, new_name } => {
-                dbm.api_database_rename(&old_name, &new_name)
-            }
+            CMD::ShowDatabases => dbm.show_databases(),
+            CMD::UseDatabase { db_name } => dbm.use_database(&db_name),
+            CMD::CreateDatabase { db_name } => dbm.create_database(&db_name),
+            CMD::DropDatabase { db_name } => dbm.drop_database(&db_name),
+            CMD::RenamDatabase { old_name, new_name } => dbm.rename_database(&old_name, &new_name),
 
             // table
             CMD::CreateTable {
                 table_name,
                 raw_columns,
-            } => dbm.api_table_create(&table_name, raw_columns),
-            CMD::RenameTable { old_name, new_name } => dbm.api_table_rename(&old_name, &new_name),
-            CMD::DropTable { table_name } => dbm.api_table_drop(&table_name),
-            CMD::DescribeTable { table_name } => dbm.api_table_describe(&table_name),
-            CMD::ShowTables => dbm.api_table_show(),
+            } => dbm.create_table(&table_name, raw_columns),
+            CMD::RenameTable { old_name, new_name } => dbm.rename_table(&old_name, &new_name),
+            CMD::DropTable { table_name } => dbm.drop_table(&table_name),
+            CMD::DescribeTable { table_name } => dbm.describe_table(&table_name),
+            CMD::ShowTables => dbm.show_tables(),
 
             // column
             CMD::AddColumns {
                 table_name,
                 raw_columns,
-            } => dbm.api_column_add(&table_name, raw_columns),
+            } => dbm.add_columns(&table_name, raw_columns),
             CMD::DropColumn {
                 table_name,
                 column_name,
-            } => dbm.api_column_drop(&table_name, &column_name),
+            } => dbm.drop_column(&table_name, &column_name),
             CMD::RenameColumn {
                 table_name,
                 old_name,
                 new_name,
-            } => dbm.api_column_rename(&table_name, &old_name, &new_name),
+            } => dbm.rename_column(&table_name, &old_name, &new_name),
             CMD::ModifyType {
                 table_name,
                 column_name,
                 new_type,
-            } => dbm.api_column_modify_type(&table_name, &column_name, new_type),
+            } => dbm.modify_column_type(&table_name, &column_name, new_type),
             CMD::AddConstraint {
                 table_name,
                 column_name,
                 constraint,
-            } => dbm.api_column_constraint_add(&table_name, &column_name, constraint),
+            } => dbm.add_column_constraint(&table_name, &column_name, constraint),
             CMD::DropConstraint {
                 table_name,
                 column_name,
                 constraint,
-            } => dbm.api_column_constraint_drop(&table_name, &column_name, constraint),
+            } => dbm.drop_column_constraint(&table_name, &column_name, constraint),
             CMD::SetDefault {
                 table_name,
                 column_name,
                 default_value,
-            } => dbm.api_column_set_default(&table_name, &column_name, default_value),
+            } => dbm.set_default_value(&table_name, &column_name, default_value),
 
             // row
             CMD::Insert {
                 table_name,
                 raw_rows,
-            } => dbm.api_row_insert(&table_name, raw_rows),
+            } => dbm.insert_rows(&table_name, raw_rows),
             CMD::Update {
                 table_name,
                 assignments,
                 predicate,
-            } => dbm.api_row_update(&table_name, assignments, predicate),
+            } => dbm.update_rows(&table_name, assignments, predicate),
             CMD::Delete {
                 table_name,
                 predicate,
-            } => dbm.api_row_delete(&table_name, predicate),
+            } => dbm.delete_rows(&table_name, predicate),
 
             // select
             CMD::Select {
                 table_name,
                 statement,
-            } => dbm.api_select(&table_name, statement),
+            } => dbm.select(&table_name, statement),
         };
 
         if result.is_err() {

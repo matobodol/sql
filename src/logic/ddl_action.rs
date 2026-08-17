@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::catalog::Metadata;
@@ -23,6 +23,15 @@ pub(crate) fn apply_add_columns(
     }
 
     let table_id = catalog.get_table_id(table_name)?;
+
+    let mut seen = HashSet::new();
+    // TAHAP VALIDASI: Cek semua kolom di batch terhadap katalog DAN duplikat internal
+    for (col_name, _, _, _) in &columns {
+        // Cek apakah sudah ada di database ATAU duplikat di dalam batch ini
+        if catalog.get_column_id(table_id, col_name).is_ok() || !seen.insert(col_name) {
+            return Err(DomainError::ColumnAlreadyExists(col_name.clone().into()));
+        }
+    }
 
     for (col_name, sql_type, constraints, position) in columns {
         let current_schema = catalog.get_schema(table_id)?;

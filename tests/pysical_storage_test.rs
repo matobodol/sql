@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use sql::{DBM, DataType, DomainError, api_command::CMD};
+    use sql::{CMD, ColumnConstraint, ColumnPosition, DBM, DataType, DomainError, Increment};
 
     #[allow(warnings)]
     const USR_NAME: &str = "user_test";
@@ -88,7 +88,7 @@ mod tests {
 
     // B. test point
     #[test]
-    fn test_presisten_table_actions() -> Result<(), DomainError> {
+    fn test_presistent_table_actions() -> Result<(), DomainError> {
         remove_data_file()?;
 
         let mut dbm = DBM::new();
@@ -152,6 +152,99 @@ mod tests {
         }]);
         debug_assert!(res.is_ok(), "drop table eksis: harus sukses");
 
+        Ok(())
+    }
+
+    // C.
+    #[test]
+    fn ddl_action_test() -> Result<(), DomainError> {
+        remove_data_file()?;
+
+        let mut dbm = DBM::new();
+        // hapus data lama jika ada
+        let res = dbm.execute(vec![CMD::CreateDatabase {
+            db_name: DB_NAME.to_string(),
+        }]);
+        debug_assert!(res.is_ok(), "creat db: harus ok");
+
+        let res = dbm.execute(vec![CMD::UseDatabase {
+            db_name: DB_NAME.to_string(),
+        }]);
+        debug_assert!(res.is_ok(), "use database: harus sukses");
+
+        //tes invalid:  buat table duplicate column name
+        let raw_columns = vec![
+            ("name".to_string(), DataType::Text, vec![]),
+            ("name".to_string(), DataType::Text, vec![]),
+        ];
+        let res = dbm.execute(vec![CMD::CreateTable {
+            table_name: TBL_NAME.to_string(),
+            raw_columns,
+        }]);
+        debug_assert!(
+            res.is_err(),
+            "harus gagal: create table duplicate column batch"
+        );
+
+        // buat table baru dengan kolom
+        let raw_columns = vec![(
+            "id".to_string(),
+            DataType::Int,
+            vec![
+                ColumnConstraint::PrimaryKey,
+                ColumnConstraint::Auto(Increment::Enabled { start: 1, step: 1 }),
+            ],
+        )];
+        let res = dbm.execute(vec![CMD::CreateTable {
+            table_name: TBL_NAME.to_string(),
+            raw_columns,
+        }]);
+        debug_assert!(res.is_ok(), "harus aukses: add columns");
+
+        // test invalid: add columns duplicate batch
+        let raw_columns = vec![
+            (
+                "name".to_string(),
+                DataType::Text,
+                vec![ColumnConstraint::NotNull],
+                ColumnPosition::Default,
+            ),
+            (
+                "name".to_string(),
+                DataType::Text,
+                vec![ColumnConstraint::NotNull],
+                ColumnPosition::Default,
+            ),
+        ];
+        let res = dbm.execute(vec![CMD::AddColumns {
+            table_name: TBL_NAME.to_string(),
+            raw_columns,
+        }]);
+        debug_assert!(res.is_err(), "harus gagal: add column duplicate: {:?}", res);
+
+        // add columns uniq
+        let raw_columns = vec![
+            (
+                "name".to_string(),
+                DataType::Text,
+                vec![ColumnConstraint::NotNull],
+                ColumnPosition::Default,
+            ),
+            (
+                "status".to_string(),
+                DataType::Enum {
+                    name: "status".to_string(),
+                    variants: vec!["lulus".to_string(), "gagal".to_string()],
+                },
+                vec![ColumnConstraint::NotNull],
+                ColumnPosition::Default,
+            ),
+        ];
+        let res = dbm.execute(vec![CMD::AddColumns {
+            table_name: TBL_NAME.to_string(),
+            raw_columns,
+        }]);
+        debug_assert!(res.is_ok(), "harus ok: add column uniq");
         Ok(())
     }
 }

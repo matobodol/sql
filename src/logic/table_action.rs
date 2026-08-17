@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+    sync::Arc,
+};
 
 use crate::{
     Column, ColumnConstraint, ColumnId, DataType, DomainError, Row, RowId, Schema, TableContext,
@@ -21,8 +25,20 @@ pub(crate) fn apply_create_table(
             "Table tidak boleh kosong, setidaknya buat 1 kolom.",
         ));
     }
-    let table_id = catalog.register_table(table_name)?;
 
+    // FASE 1: Validasi murni (tidak mengubah state sama sekali)
+    let mut seen = HashSet::new();
+    for (col_name, _, _) in &raw_columns {
+        if !seen.insert(col_name) {
+            return Err(DomainError::eval_error(format!(
+                "duplicate columns batch {}",
+                col_name,
+            )));
+        }
+    }
+
+    // FASE 2: Eksekusi setelah dijamin 100% aman
+    let table_id = catalog.register_table(table_name)?;
     for (col_name, sql_type, constraints) in raw_columns {
         if let Err(err) = catalog.register_column(table_id, &col_name, sql_type, constraints) {
             let _ = catalog.unregister_table(table_name);
